@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<title>Touch Bar</title>
+<style>
+:root {
+  --bg: #1c1c1e; --panel: #2a2a2d; --panel2: #333336; --line: #3d3d41;
+  --fg: #ececf0; --dim: #9a9aa2; --accent: #4c8dff; --danger: #ff5c5c; --ok: #4cd964;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, -apple-system, "Inter", sans-serif; }
+header { display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: #141416; border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+header h1 { font-size: 16px; margin: 0 12px 0 0; font-weight: 600; }
+header .spacer { flex: 1; }
+#status { color: var(--dim); font-size: 13px; }
+#status.err { color: var(--danger); } #status.ok { color: var(--ok); }
+button, select, input, textarea { font: inherit; color: var(--fg); }
+button { background: var(--panel2); border: 1px solid var(--line); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+button:hover { background: #3c3c40; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+button.danger { color: var(--danger); }
+button:disabled { opacity: .45; cursor: default; }
+input[type=text], input[type=number], select, textarea { background: #1a1a1c; border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; width: 100%; }
+textarea { font-family: ui-monospace, monospace; font-size: 12px; min-height: 70px; }
+input[type=color] { width: 38px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: none; }
+main { display: grid; grid-template-columns: 220px minmax(0, 1fr) 360px; gap: 14px; padding: 14px 16px; align-items: start; }
+@media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+.card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 0 0 10px; font-weight: 600; }
+.layers .item { display: flex; align-items: center; gap: 6px; padding: 7px 8px; border-radius: 7px; cursor: pointer; }
+.layers .item:hover { background: var(--panel2); }
+.layers .item.sel { background: var(--accent); color: #fff; }
+.layers .item .n { font-variant-numeric: tabular-nums; opacity: .7; width: 18px; }
+.layers .item .slots { margin-left: auto; font-size: 12px; opacity: .7; }
+.row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.barwrap { overflow-x: auto; padding: 14px 0 6px; }
+.bar { position: relative; background: #000; border-radius: 10px; margin: 0 auto; box-shadow: 0 0 0 6px #0b0b0c; }
+.btn { position: absolute; display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: pointer; color: #fff; font-weight: 700; white-space: nowrap; }
+.btn img { pointer-events: none; }
+.btn.sel { outline: 3px solid var(--accent); outline-offset: 2px; z-index: 2; }
+.btn.ghost { border: 2px dashed #555; color: #888; font-weight: 400; font-style: italic; }
+.btn.spacer { border: 1px dashed #2c2c2c; }
+.btn.spacer:hover, .btn.spacer.sel { border-color: #666; }
+.sep { position: absolute; background: #000; pointer-events: none; }
+.track { position: absolute; height: 22%; border-radius: 99px; background: #555; }
+.track i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 99px; background: #fff; }
+.hint { color: var(--dim); font-size: 12px; }
+.zoom { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--dim); }
+.zoom input { width: 140px; }
+.grid { display: grid; grid-template-columns: 130px 1fr; gap: 7px 10px; align-items: center; }
+.grid label { color: var(--dim); font-size: 13px; }
+.grid .full { grid-column: 1 / -1; }
+.colorrow { display: flex; gap: 6px; align-items: center; }
+.colorrow input[type=text] { width: 100px; }
+details { margin-top: 10px; }
+summary { cursor: pointer; color: var(--dim); }
+.tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+.tabs button.sel { background: var(--accent); border-color: var(--accent); color: #fff; }
+.real img { width: 100%; image-rendering: pixelated; border-radius: 6px; background: #000; display: block; }
+.palette { display: flex; flex-wrap: wrap; gap: 6px; }
+.palette button { padding: 4px 8px; font-size: 12px; }
+.iconpick { display: grid; grid-template-columns: repeat(auto-fill, minmax(46px, 1fr)); gap: 5px; max-height: 190px; overflow: auto; margin-top: 6px; padding: 4px; background: #1a1a1c; border-radius: 6px; }
+.iconpick div { background: #333; border-radius: 6px; height: 40px; display: flex; align-items: center; justify-content: center; cursor: pointer; border: 2px solid transparent; }
+.iconpick div.sel { border-color: var(--accent); }
+.iconpick img { width: 24px; height: 24px; }
+kbd { background: #333; border-radius: 4px; padding: 0 5px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Touch Bar</h1>
+  <button class="primary" id="save">Salvează</button>
+  <button id="revert">Anulează modificările</button>
+  <button id="capture">Captură reală</button>
+  <span id="status"></span>
+  <span class="spacer"></span>
+  <button id="quit" title="Oprește serverul local">Închide</button>
+</header>
+
+<main>
+  <section>
+    <div class="card layers">
+      <h2>Ecrane (layers)</h2>
+      <div id="layerlist"></div>
+      <div class="row">
+        <button id="addLayer">+ Ecran</button>
+        <button id="upLayer" title="Mută sus">↑</button>
+        <button id="downLayer" title="Mută jos">↓</button>
+        <button id="delLayer" class="danger">Șterge</button>
+      </div>
+      <label class="hint" style="display:block;margin-top:10px">Nume ecran</label>
+      <input type="text" id="layerName" style="margin-top:4px">
+      <div class="hint" style="margin-top:12px">Stil doar pentru acest ecran (gol = cel global)</div>
+      <div id="layerStyle" style="display:grid;grid-template-columns:1fr 80px;gap:6px 8px;align-items:center;margin-top:6px"></div>
+      <p class="hint">Ecranul 0 apare implicit. Ecranul 1 apare cât ții apăsat <kbd>fn</kbd>. Celelalte se deschid cu un buton care are acțiunea <code>LayerN</code> și se închid după <em>LayerTimeout</em>.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="card">
+      <h2 id="previewTitle">Previzualizare</h2>
+      <div class="zoom"><span>Zoom</span><input type="range" id="zoom" min="0.35" max="1.2" step="0.05" value="0.55"><span id="zoomv"></span>
+        <span style="margin-left:auto" id="slotinfo"></span></div>
+      <div class="barwrap"><div class="bar" id="bar"></div></div>
+      <div class="row">
+        <select id="addType" style="width:auto">
+          <option value="icon">+ Buton cu iconiță</option>
+          <option value="text">+ Buton cu text</option>
+          <option value="spacer">+ Spațiu gol</option>
+          <option value="slider">+ Slider</option>
+          <option value="mediabtn">+ Buton media (apare doar când cântă ceva)</option>
+          <option value="media">+ Media (player)</option>
+          <option value="command">+ Widget (script)</option>
+          <option value="time">+ Ceas</option>
+          <option value="battery">+ Baterie</option>
+          <option value="cpu">+ CPU</option>
+          <option value="gpu">+ GPU</option>
+        </select>
+        <button id="addBtn">Adaugă</button>
+        <span class="hint" style="align-self:center">Click pe un buton din bară ca să-l editezi.</span>
+      </div>
+    </div>
+
+    <div class="card real" style="margin-top:14px">
+      <h2>Captură reală de pe Touch Bar</h2>
+      <div id="realwrap" class="hint">Apasă „Captură reală” după ce salvezi ca să vezi exact ce afișează bara.</div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="tabs"><button data-tab="global" class="sel">Setări generale</button><button data-tab="style">Stil</button><button data-tab="raw">TOML / JSON</button></div>
+      <div id="tab-global" class="grid"></div>
+      <div id="tab-style" class="grid" hidden></div>
+      <div id="tab-raw" hidden>
+        <p class="hint">Tot config-ul ca JSON (lățimile sunt în butoane, nu în sloturi). Poți edita direct; apasă „Aplică JSON” ca să-l încarci în editor (nu salvează încă).</p>
+        <textarea id="rawjson" style="min-height:300px"></textarea>
+        <div class="row"><button id="applyRaw">Aplică JSON</button></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="card" id="editor">
+      <h2>Buton</h2>
+      <div id="editorBody" class="hint">Selectează un buton din previzualizare.</div>
+    </div>
+  </section>
+</main>
+
+<script>
+// Test hook: ?shot delays the load event a few seconds (headless screenshots).
+if (location.search.includes("shot")) document.write('<img hidden src="' + location.pathname.replace(/\/$/, "") + '/api/sleep">');
+window.addEventListener("error", (e) => { const s = document.getElementById("status"); if (s) { s.textContent = "Eroare JS: " + e.message + " (linia " + e.lineno + ")"; s.className = "err"; } });
+</script>
+<script>
+"use strict";
+const BASE = location.pathname.replace(/\/$/, "");
+const BAR_W = 2008, BAR_H = 64; // MacBookPro16,1 Touch Bar panel (from the daemon's frame)
+const DEFAULT_STYLE = { Background: "#000000", ButtonColor: "#333333", ButtonColorActive: "#666666", TextColor: "#ffffff",
+  ButtonSpacing: 16, EdgePadding: 0, CornerRadius: 8, SeparatorWidth: 2, SeparatorOpacity: 0.4, HeightPercent: 90,
+  FontSize: 32, IconSize: 48, BatteryChargingColor: "#00b300", BatteryLowColor: "#b30000" };
+const GLOBALS = [
+  ["LayerTimeout", "num", 0, "Secunde fără atingere până când ecranele 2+ revin la 0 (0 = niciodată)"],
+  ["LayerSwipe", "bool", true, "Swipe cu două degete între control strip (0) și Fn (1)"],
+  ["TransitionMs", "num", 280, "Durata animației la deschiderea/închiderea ecranelor 2+ (ms, 0 = instant)"],
+  ["DragCloseTimeout", "num", 3, "Secunde până se închide sliderul deschis prin ținut apăsat + tras"],
+  ["DimTimeout", "num", 30, "Secunde până se estompează bara (0 = niciodată)"],
+  ["OffTimeout", "num", 60, "Secunde până se stinge bara (0 = niciodată)"],
+  ["DimBrightness", "num", "", "Luminozitate % după DimTimeout (gol = estompare hardware, ca înainte)"],
+  ["OffBrightness", "num", 0, "Luminozitate % după OffTimeout (0 = se stinge; >0 = doar foarte estompată)"],
+  ["AdaptiveBrightness", "bool", true, "Luminozitate după senzorul de lumină"],
+  ["ActiveBrightness", "num", 128, "Luminozitate fixă 0–255 (dacă nu e adaptivă)"],
+  ["ShowButtonOutlines", "bool", true, "Desenează fundalul butoanelor"],
+  ["FontFamily", "text", "", "Font (gol = implicit)"],
+  ["FontBold", "bool", true, "Text bold"],
+  ["EnablePixelShift", "bool", false, "Mută imaginea cu un pixel periodic (anti burn-in)"],
+  ["VisibleButtons", "num", 0, "Sloturi vizibile; mai multe = derulare (0 = toate)"],
+  ["ScrollLoop", "bool", true, "Derularea face buclă"],
+  ["DoublePressSwitchLayers", "num", 0, "ms pentru dublu-fn care schimbă ecranele permanent (0 = oprit)"],
+  ["LyricOffset", "num", 0, "Decalaj versuri (secunde)"],
+  ["MediaCoverBlur", "bool", false, "Blur pe coperta albumului"],
+  ["MediaArtCache", "bool", true, "Cache coperți"],
+  ["MediaLyricsCache", "bool", true, "Cache versuri"],
+];
+const STYLES = [
+  ["ButtonSpacing", "num", "Spațiu între butoane (px). 0 = grup lipit cu separatoare"],
+  ["EdgePadding", "num", "Margine la capetele barei (px)"],
+  ["CornerRadius", "num", "Rotunjire colțuri (px)"],
+  ["SeparatorWidth", "num", "Grosime separator între butoane lipite (px)"],
+  ["SeparatorOpacity", "num", "Opacitate separator 0–1"],
+  ["HeightPercent", "num", "Înălțime butoane, % din bară"],
+  ["IconSize", "num", "Mărime iconițe (px)"],
+  ["FontSize", "num", "Mărime text (px)"],
+  ["ButtonColor", "color", "Culoare buton"],
+  ["ButtonColorActive", "color", "Culoare buton apăsat"],
+  ["TextColor", "color", "Culoare text/iconițe"],
+  ["Background", "color", "Fundal bară"],
+  ["BatteryChargingColor", "color", "Baterie la încărcare"],
+  ["BatteryLowColor", "color", "Baterie descărcată"],
+];
+const KEYS = ["Esc","F1","F2","F3","F4","F5","F6","F7","F8","F9","F10","F11","F12","BrightnessDown","BrightnessUp",
+  "IllumDown","IllumUp","PlayPause","NextSong","PreviousSong","Mute","VolumeDown","VolumeUp","MicMute","Search",
+  "Delete","Enter","Space","Tab","Home","End","PageUp","PageDown","Left","Right","Up","Down","LeftCtrl","LeftShift",
+  "LeftAlt","LeftMeta","Print","Calc","Sleep","TouchBarBrightnessUp","TouchBarBrightnessDown",
+  "Layer0","Layer1","Layer2","Layer3","Layer4","Layer5","Layer6","Layer7","Layer8","Layer9"];
+const CONTENT_KEYS = ["Icon","Text","Time","Locale","Battery","Cpu","CpuLabel","Gpu","GpuLabel","Media","Command","Interval",
+  "SliderGet","SliderSet","SliderMute","SliderLowIcon","SliderMuteIcon","SliderStretch","SliderOpen","ExpandCommand","ExpandStretch"];
+
+let cfg, meta, header, saved, icons = [];
+let L = 0, B = -1, tab = "global", zoomSet = false;
+
+const $ = (s) => document.querySelector(s);
+const el = (tag, attrs = {}, ...kids) => { const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) { if (k === "class") e.className = v; else if (k.startsWith("on")) e[k] = v; else if (v !== undefined && v !== null) e.setAttribute(k, v); }
+  for (const k of kids) e.append(k); return e; };
+const api = async (p, opt) => { const r = await fetch(BASE + p, opt); if (!r.ok) throw new Error((await r.text()) || r.status); return r; };
+function status(msg, cls = "") { const s = $("#status"); s.textContent = msg; s.className = cls; }
+const clone = (o) => JSON.parse(JSON.stringify(o));
+const LS_KEYS = [["ButtonSpacing", "Spațiere"], ["CornerRadius", "Rotunjire"], ["EdgePadding", "Margine capete"]];
+function layerStyle(i) { cfg.LayerStyles = cfg.LayerStyles || []; while (cfg.LayerStyles.length < cfg.Layers.length) cfg.LayerStyles.push({});
+  return cfg.LayerStyles[i]; }
+const globalStyle = () => Object.assign({}, DEFAULT_STYLE, cfg.Style || {});
+const style = () => { const s = globalStyle(); const o = (cfg.LayerStyles || [])[L] || {};
+  for (const [k] of LS_KEYS) if (o[k] !== undefined) s[k] = o[k]; return s; };
+function tidyLayerStyles() { if (!cfg.LayerStyles) return; cfg.LayerStyles.length = cfg.Layers.length;
+  for (let i = 0; i < cfg.LayerStyles.length; i++) cfg.LayerStyles[i] = cfg.LayerStyles[i] || {};
+  if (cfg.LayerStyles.every((o) => !Object.keys(o).length)) delete cfg.LayerStyles; }
+const dirty = () => JSON.stringify({ cfg, meta }) !== saved;
+function markDirty() { status(dirty() ? "Modificări nesalvate" : "Salvat", dirty() ? "" : "ok"); }
+
+function btnType(b) {
+  if (b.SliderGet !== undefined || b.SliderSet !== undefined) return "slider";
+  if (b.Media) return "media";
+  if (b.Command !== undefined) return "command";
+  if (b.Time !== undefined) return "time";
+  if (b.Battery !== undefined) return "battery";
+  if (b.Cpu !== undefined || b.CpuTemp !== undefined) return "cpu";
+  if (b.Gpu !== undefined) return "gpu";
+  if (b.Icon !== undefined || b.Svg !== undefined) return "icon";
+  if (b.Text !== undefined) return "text";
+  return "spacer";
+}
+const TYPE_NAMES = { icon: "Iconiță", text: "Text", spacer: "Spațiu gol", slider: "Slider", media: "Media", command: "Widget (script)",
+  time: "Ceas", battery: "Baterie", cpu: "CPU", gpu: "GPU" };
+function newButton(type) {
+  switch (type) {
+    case "icon": return { Icon: icons.includes("launchpad") ? "launchpad" : (icons[0] || "search"), OnClick: "Action" };
+    case "text": return { Text: "Text", OnClick: "Action" };
+    case "spacer": return {};
+    case "slider": return { Icon: "volume_up", SliderGet: "wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '{print int($2*100) ($3==\"[MUTED]\" ? \" muted\" : \"\")}'",
+      SliderSet: "wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ {}%", SliderMute: "wpctl set-mute @DEFAULT_AUDIO_SINK@ {}", Interval: 1 };
+    case "media": return { Media: true };
+    case "mediabtn": { const ml = cfg.Layers.findIndex((l) => l.some((b) => b.Media));
+      return { Command: "sh ~/.config/big-dfr/media-button.sh", Interval: 1, OnClick: "Action", ...(ml >= 0 ? { Action: "Layer" + ml } : {}) }; }
+    case "command": return { Command: "date +%H:%M", Interval: 30 };
+    case "time": return { Time: "%H:%M" };
+    case "battery": return { Battery: "both" };
+    case "cpu": return { Cpu: "celsius" };
+    case "gpu": return { Gpu: "celsius" };
+  }
+}
+function setType(b, type) {
+  const keep = {}; for (const [k, v] of Object.entries(b)) if (!CONTENT_KEYS.includes(k) && k !== "Svg" && k !== "CpuTemp") keep[k] = v;
+  const fresh = newButton(type);
+  if (type === "spacer") { delete keep.Action; delete keep.OnClick; }
+  return Object.assign(keep, fresh, keep.Stretch ? { Stretch: keep.Stretch } : {});
+}
+
+/* ---------- fractional widths ----------
+   In the editor, widths are in "buttons" (any value > 0). The daemon only
+   knows whole slots, so each layer is saved on the smallest grid k (slots per
+   button) that represents every width; k is remembered in meta.layerScale. */
+const W_KEYS = [["Stretch", 1], ["SliderStretch", 2], ["ExpandStretch", 2]];
+function usesKey(b, key) { return key === "Stretch" || (key === "SliderStretch" && btnType(b) === "slider") ||
+  (key === "ExpandStretch" && btnType(b) === "command" && b.OnClick === "Expand"); }
+function gridFor(layer, pref) {
+  const ws = []; for (const b of layer) for (const [key, def] of W_KEYS) if (usesKey(b, key)) ws.push(b[key] ?? (key === "Stretch" ? 1 : def));
+  const fits = (k) => ws.every((w) => Math.abs(w * k - Math.round(w * k)) <= 0.02 * k && Math.round(w * k) >= 1);
+  if (pref && fits(pref)) return pref; // keep the layer's current grid when it still works
+  for (let k = 1; k <= 60; k++) if (ws.every((w) => Math.abs(w * k - Math.round(w * k)) <= 0.02 * k && Math.round(w * k) >= 1)) return k;
+  return 60;
+}
+function toSlots(layer, k) { return layer.map((b) => { const o = clone(b);
+  for (const [key] of W_KEYS) { if (!usesKey(b, key) && key !== "Stretch") continue;
+    if (o[key] === undefined && key === "Stretch") { if (k !== 1) o.Stretch = k; continue; }
+    if (o[key] === undefined) continue;
+    const s = Math.max(1, Math.round(o[key] * k)); if (key === "Stretch" && s === 1) delete o.Stretch; else o[key] = s; }
+  return o; }); }
+function toUnits(layer, k) { return layer.map((b) => { const o = clone(b);
+  for (const [key, def] of W_KEYS) { if (!usesKey(o, key)) continue;
+    const raw = o[key] ?? def; if (key !== "Stretch" && o[key] === undefined && k === 1) continue;
+    const u = +(raw / k).toFixed(4); if (key === "Stretch" && u === 1) delete o.Stretch; else o[key] = u; }
+  return o; }); }
+
+/* ---------- layout identical to the daemon's ---------- */
+function layout(unitLayer, pref) {
+  const k = gridFor(unitLayer, pref); const layer = toSlots(unitLayer, k);
+  const st = style(); const n = layer.reduce((a, b) => a + (b.Stretch || 1), 0) || 1;
+  const sp = st.ButtonSpacing, edge = st.EdgePadding;
+  const slot = (BAR_W - 2 * edge - (n - 1) * sp) / n;
+  let start = 0;
+  return { n, k, slot, items: layer.map((b, i) => { const span = b.Stretch || 1;
+    const left = Math.floor(start * (slot + sp)) + edge; const width = slot + Math.floor((span - 1) * (slot + sp));
+    start += span; return { b: unitLayer[i], left, width }; }) };
+}
+function drawn(b) { const t = btnType(b); return t !== "spacer"; }
+
+function renderBar() {
+  const layer = cfg.Layers[L] || []; const st = style(); const z = +$("#zoom").value;
+  $("#zoomv").textContent = Math.round(z * 100) + "%";
+  const bar = $("#bar"); bar.innerHTML = ""; bar.style.width = BAR_W * z + "px"; bar.style.height = BAR_H * z + "px"; bar.style.background = st.Background;
+  const { n, k, slot, items } = layout(layer, meta.layerScale[L]);
+  const units = layer.reduce((a, b) => a + (b.Stretch ?? 1), 0);
+  $("#slotinfo").textContent = `${+units.toFixed(2)} butoane · 1 buton ≈ ${(slot * k).toFixed(1)} px · grilă ×${k} (${n} sloturi)`;
+  const h = BAR_H * (st.HeightPercent / 100), top = (BAR_H - h) / 2;
+  const joined = st.ButtonSpacing === 0;
+  items.forEach(({ b, left: left0, width: width0 }, i) => {
+    const t = btnType(b);
+    const il = Math.max(0, b.InsetLeft || 0), ir = Math.max(0, b.InsetRight || 0);
+    const left = left0 + il, width = Math.max(1, width0 - il - ir);
+    const d = el("div", { class: "btn" + (i === B ? " sel" : "") + (t === "spacer" ? " spacer" : "") });
+    Object.assign(d.style, { left: left * z + "px", top: top * z + "px", width: width * z + "px", height: h * z + "px",
+      fontSize: st.FontSize * z + "px", color: b.TextColor || st.TextColor });
+    const rl = !joined || i === 0 || !drawn(items[i - 1].b) || il > 0 || (items[i - 1].b.InsetRight || 0) > 0;
+    const rr = !joined || i === items.length - 1 || !drawn(items[i + 1].b) || ir > 0 || (items[i + 1].b.InsetLeft || 0) > 0;
+    const r = Math.min(b.CornerRadius ?? st.CornerRadius, h / 2, width / 2) * z;
+    d.style.borderRadius = `${rl ? r : 0}px ${rr ? r : 0}px ${rr ? r : 0}px ${rl ? r : 0}px`;
+    if (t !== "spacer" && t !== "media" && st.ShowButtonOutlines !== false) d.style.background = b.Color || st.ButtonColor;
+    if (cfg.ShowButtonOutlines === false && !b.Color) d.style.background = "transparent";
+    const icoW = (b.IconWidth || st.IconSize) * z, icoH = (b.IconHeight || st.IconSize) * z;
+    const ico = (name) => el("img", { src: `${BASE}/icon/${encodeURIComponent(name)}`, width: icoW, height: icoH, alt: name });
+    if (t === "icon") d.append(ico(b.Icon || b.Svg));
+    else if (t === "text") d.append(b.Text);
+    else if (t === "time") d.append(new Date().toTimeString().slice(0, 5));
+    else if (t === "battery") d.append("🔋 84%");
+    else if (t === "cpu") d.append("CPU 52°C");
+    else if (t === "gpu") d.append("GPU 48°C");
+    else if (t === "media") { d.classList.add("ghost"); d.style.background = "#222"; d.append("♪ media (copertă, controale, versuri)"); }
+    else if (t === "command") {
+      if (/media-button/.test(b.Command)) { d.classList.add("ghost"); d.append(ico("play_pause")); d.title = "Apare doar când cântă ceva"; }
+      else { d.append(el("span", { style: "font-weight:400;font-style:italic" }, "⚙ " + b.Command.split(/\s+/).pop().split("/").pop())); }
+      d.title = (d.title ? d.title + ". " : "") + "Când scriptul nu afișează nimic, butonul dispare și lățimea lui trece la spațiul gol din stânga.";
+    } else if (t === "slider") {
+      d.append(ico(b.Icon || "volume_up"));
+      if (b.SliderOpen) { d.style.justifyContent = "flex-start"; d.firstChild.style.marginLeft = 12 * z + "px";
+        const tr = el("div", { class: "track" }); Object.assign(tr.style, { left: (icoW + 34 * z) + "px", right: 24 * z + "px" });
+        tr.append(Object.assign(el("i"), { style: "width:60%" })); d.append(tr); }
+    } else if (t === "spacer") d.title = "Spațiu gol";
+    d.onclick = () => { B = i; render(); };
+    bar.append(d);
+    if (joined && !rl && t !== "spacer") {
+      const s = el("div", { class: "sep" }); Object.assign(s.style, { left: Math.round(left) * z + "px", top: top * z + "px",
+        width: Math.max(1, st.SeparatorWidth * z) + "px", height: h * z + "px", opacity: st.SeparatorOpacity }); bar.append(s);
+    }
+  });
+}
+
+function renderLayers() {
+  const list = $("#layerlist"); list.innerHTML = "";
+  cfg.Layers.forEach((layer, i) => {
+    const n = +layer.reduce((a, b) => a + (b.Stretch ?? 1), 0).toFixed(2);
+    list.append(el("div", { class: "item" + (i === L ? " sel" : ""), onclick: () => { L = i; B = -1; render(); } },
+      el("span", { class: "n" }, String(i)), el("span", {}, layerName(i)), el("span", { class: "slots" }, `${layer.length} · ${n}`)));
+  });
+  $("#layerName").value = layerName(L);
+  const ls = $("#layerStyle"); if (!ls.contains(document.activeElement)) { ls.innerHTML = ""; const gs = globalStyle(); const o = layerStyle(L);
+    for (const [k, name] of LS_KEYS) ls.append(el("label", { class: "hint" }, name), numIn(o, k, String(gs[k]), () => { tidyLayerStyles(); changed(); })); }
+  $("#previewTitle").textContent = `Previzualizare — ecranul ${L}: ${layerName(L)}`;
+  $("#delLayer").disabled = cfg.Layers.length <= 1;
+}
+function layerName(i) { const d = ["Control strip", "Fn (F1–F12)"]; return (meta.layerNames || [])[i] || d[i] || `Ecran ${i}`; }
+
+/* ---------- editor ---------- */
+function field(label, input, hint) {
+  const frag = document.createDocumentFragment();
+  frag.append(el("label", {}, label), input);
+  if (hint) frag.append(el("span", { class: "hint full" }, hint));
+  return frag;
+}
+function textIn(obj, key, ph, after) {
+  return el("input", { type: "text", value: obj[key] ?? "", placeholder: ph || "", oninput: (e) => {
+    const v = e.target.value; if (v === "") delete obj[key]; else obj[key] = v; after ? after() : changed(); } });
+}
+function numIn(obj, key, ph, after, step) {
+  return el("input", { type: "number", step: step || "any", value: obj[key] ?? "", placeholder: ph ?? "", oninput: (e) => {
+    const v = e.target.value; if (v === "") delete obj[key]; else obj[key] = Number(v); after ? after() : changed(); } });
+}
+function boolIn(obj, key, def) {
+  const s = el("select", { onchange: (e) => { const v = e.target.value; if (v === "") delete obj[key]; else obj[key] = v === "true"; changed(); } },
+    el("option", { value: "" }, `implicit (${def ? "da" : "nu"})`), el("option", { value: "true" }, "da"), el("option", { value: "false" }, "nu"));
+  s.value = obj[key] === undefined ? "" : String(obj[key]); return s;
+}
+function colorIn(obj, key, def) {
+  const has = obj[key] !== undefined; const cur = (obj[key] || def || "#000000").slice(0, 7);
+  const txt = el("input", { type: "text", value: obj[key] ?? "", placeholder: "implicit" });
+  const pick = el("input", { type: "color", value: /^#[0-9a-f]{6}$/i.test(cur) ? cur : "#000000" });
+  pick.oninput = () => { obj[key] = pick.value; txt.value = pick.value; changed(); };
+  txt.oninput = () => { const v = txt.value.trim(); if (!v) delete obj[key]; else obj[key] = v; changed(); };
+  const clr = el("button", { title: "Implicit", onclick: () => { delete obj[key]; txt.value = ""; changed(); } }, "↺");
+  return el("div", { class: "colorrow" }, pick, txt, clr);
+}
+function actionIn(b) {
+  const cur = b.Action === undefined ? "" : (Array.isArray(b.Action) ? b.Action.join(", ") : b.Action);
+  const inp = el("input", { type: "text", value: cur, list: "keys", placeholder: "nimic", oninput: (e) => {
+    const parts = e.target.value.split(",").map((s) => s.trim()).filter(Boolean);
+    if (!parts.length) delete b.Action; else b.Action = parts.length === 1 ? parts[0] : parts; changed(); } });
+  return inp;
+}
+function onClickIn(b) {
+  const mode = b.OnClick === undefined ? "" : (b.OnClick === "Action" || b.OnClick === "Expand" ? b.OnClick : "cmd");
+  const sel = el("select", {}, el("option", { value: "" }, "nimic (fără evidențiere)"), el("option", { value: "Action" }, "Acțiunea (se luminează la apăsare)"),
+    el("option", { value: "cmd" }, "Rulează o comandă"), el("option", { value: "Expand" }, "Expand (widget)"));
+  sel.value = mode;
+  const cmd = el("input", { type: "text", value: mode === "cmd" ? b.OnClick : "", placeholder: "ex: systemd-run --user --quiet --collect firefox" });
+  cmd.hidden = mode !== "cmd";
+  sel.onchange = () => { const v = sel.value; cmd.hidden = v !== "cmd";
+    if (v === "") delete b.OnClick; else if (v === "cmd") b.OnClick = cmd.value || "true"; else b.OnClick = v; changed(); };
+  cmd.oninput = () => { b.OnClick = cmd.value || "true"; changed(); };
+  return el("div", { style: "display:grid;gap:6px" }, sel, cmd);
+}
+function iconPicker(b, key) {
+  const wrap = el("div", { class: "full" });
+  const inp = el("input", { type: "text", value: b[key] ?? "", list: "iconlist", oninput: (e) => { b[key] = e.target.value; changed(); refresh(); } });
+  const grid = el("div", { class: "iconpick" });
+  const refresh = () => { grid.querySelectorAll("div").forEach((d) => d.classList.toggle("sel", d.dataset.n === b[key])); };
+  for (const n of icons) grid.append(el("div", { "data-n": n, title: n, onclick: () => { b[key] = n; inp.value = n; changed(); refresh(); } },
+    el("img", { src: `${BASE}/icon/${encodeURIComponent(n)}`, loading: "lazy" })));
+  refresh(); wrap.append(inp, grid);
+  wrap.append(el("div", { class: "hint" }, "Pune fișiere .svg (albe) în ~/.config/big-dfr/ ca să apară aici."));
+  return wrap;
+}
+
+function renderEditor() {
+  const body = $("#editorBody"); body.innerHTML = "";
+  const layer = cfg.Layers[L]; const b = layer[B];
+  if (!b) { body.className = "hint"; body.textContent = "Selectează un buton din previzualizare."; return; }
+  body.className = "";
+  const t = btnType(b);
+  const nav = el("div", { class: "row", style: "margin:0 0 12px" },
+    el("button", { onclick: () => move(-1), disabled: B === 0 ? "" : null }, "◀ Mută"),
+    el("button", { onclick: () => move(1), disabled: B === layer.length - 1 ? "" : null }, "Mută ▶"),
+    el("button", { onclick: () => { layer.splice(B + 1, 0, clone(b)); B++; changed(); } }, "Duplică"),
+    el("button", { class: "danger", onclick: () => { layer.splice(B, 1); B = Math.min(B, layer.length - 1); changed(); } }, "Șterge"));
+  body.append(nav);
+  const g = el("div", { class: "grid" });
+  const typeSel = el("select", { onchange: (e) => { layer[B] = setType(b, e.target.value); changed(); } },
+    ...Object.entries(TYPE_NAMES).map(([k, v]) => el("option", { value: k }, v)));
+  typeSel.value = t;
+  g.append(field("Tip", typeSel));
+  g.append(field("Lățime (butoane)", numIn(b, "Stretch", "1", null, "any"), "Orice valoare > 0, ex. 0.33, 0.5, 1.25. 1 = un buton normal."));
+
+  if (t === "icon") { g.append(el("label", { class: "full" }, "Iconiță")); g.append(iconPicker(b, b.Svg !== undefined ? "Svg" : "Icon")); }
+  if (t === "text") g.append(field("Text", textIn(b, "Text")));
+  if (t === "time") { g.append(field("Format", textIn(b, "Time", "%H:%M"), "strftime: %H:%M, %a %d %b, ...")); g.append(field("Locale", textIn(b, "Locale", "ro_RO"))); }
+  if (t === "battery") { const s = el("select", { onchange: (e) => { b.Battery = e.target.value; changed(); } },
+      ...["icon", "percentage", "both"].map((v) => el("option", { value: v }, v))); s.value = b.Battery; g.append(field("Afișare", s)); }
+  if (t === "cpu" || t === "gpu") { const k = t === "cpu" ? "Cpu" : "Gpu"; g.append(field("Arată", textIn(b, k, "celsius watts"), "celsius, fahrenheit, watts — separate cu spațiu"));
+    g.append(field("Etichetă", boolIn(b, k + "Label", true))); }
+  if (t === "command") {
+    g.append(field("Comandă", textIn(b, "Command"), "Output: text simplu sau JSON {\"text\",\"icon\",\"color\"}. Output gol = butonul e invizibil și nu reacționează."));
+    g.append(field("Interval (s)", numIn(b, "Interval", "2")));
+    g.append(field("Comandă expand", textIn(b, "ExpandCommand"), "Folosită cu OnClick = Expand"));
+    g.append(field("Lățime expand (butoane)", numIn(b, "ExpandStretch", "2", null, "any")));
+  }
+  if (t === "slider") {
+    g.append(el("label", { class: "full" }, "Iconiță")); g.append(iconPicker(b, "Icon"));
+    g.append(field("Iconiță < 50%", textIn(b, "SliderLowIcon", "", () => changed()))); g.append(field("Iconiță mute", textIn(b, "SliderMuteIcon")));
+    g.append(field("Citește valoarea", textIn(b, "SliderGet"), "Afișează 0–100, opțional urmat de „muted”"));
+    g.append(field("Setează valoarea", textIn(b, "SliderSet"), "{} = valoarea nouă"));
+    g.append(field("Mute", textIn(b, "SliderMute"), "{} = toggle sau 0"));
+    g.append(field("Interval (s)", numIn(b, "Interval", "2")));
+    g.append(field("Lățime deschis (butoane)", numIn(b, "SliderStretch", "2", null, "any")));
+    g.append(field("Mereu deschis", boolIn(b, "SliderOpen", false)));
+    const pres = el("div", { class: "palette full" },
+      el("button", { onclick: () => { Object.assign(b, { Icon: "volume_up", SliderLowIcon: "volume_down", SliderMuteIcon: "volume_off", ...newButton("slider") }); b.Icon = "volume_up"; changed(); } }, "Preset volum"),
+      el("button", { onclick: () => { delete b.SliderMute; delete b.SliderMuteIcon; Object.assign(b, { Icon: "brightness_high", SliderLowIcon: "brightness_low",
+        SliderGet: "brightnessctl -m -d gmux_backlight | cut -d, -f4 | tr -d %", SliderSet: "brightnessctl -q -n1 -d gmux_backlight set {}%", Interval: 1 }); changed(); } }, "Preset luminozitate"),
+      el("button", { onclick: () => { delete b.SliderMute; delete b.SliderMuteIcon; Object.assign(b, { Icon: "backlight_high", SliderLowIcon: "backlight_low",
+        SliderGet: "brightnessctl -m -d ':white:kbd_backlight' | cut -d, -f4 | tr -d %", SliderSet: "brightnessctl -q -d ':white:kbd_backlight' set {}%", Interval: 1 }); changed(); } }, "Preset tastatură"));
+    g.append(pres);
+  }
+  if (t === "media") g.append(field("La tap pe panou", textIn(b, "OnClick", "ex: systemd-run --user gtk-launch spotify"), "Comandă rulată când atingi panoul în afara butoanelor"));
+  if (t !== "spacer" && t !== "media") {
+    g.append(field("Acțiune", actionIn(b), "Tastă (VolumeUp, F5…), LayerN (deschide ecranul N), sau mai multe separate cu virgulă = combinație."));
+    g.append(field("La apăsare", onClickIn(b)));
+    const pal = el("div", { class: "palette full" }, el("span", { class: "hint" }, "Rapid:"),
+      ...[["Launchpad", { OnClick: "systemd-run --user --quiet --collect dms ipc call spotlight toggle" }, true],
+          ["Închide ecran", { Action: "Layer0", OnClick: "Action" }], ["Play/Pause", { Action: "PlayPause", OnClick: "Action" }],
+          ["Firefox", { OnClick: "systemd-run --user --quiet --collect firefox" }, true]].map(([n, v, drop]) =>
+        el("button", { onclick: () => { if (drop) delete b.Action; Object.assign(b, v); changed(); } }, n)));
+    for (let i = 0; i < cfg.Layers.length; i++) if (i !== L) pal.append(el("button", { onclick: () => { b.Action = "Layer" + i; b.OnClick = "Action"; changed(); } }, `→ ${i}: ${layerName(i)}`));
+    g.append(pal);
+  }
+  if (t !== "spacer") {
+    const st = style();
+    g.append(el("label", { class: "full", style: "margin-top:6px;color:var(--fg)" }, "Aspect"));
+    g.append(field("Culoare", colorIn(b, "Color", st.ButtonColor)));
+    g.append(field("Culoare apăsat", colorIn(b, "ColorActive", st.ButtonColorActive)));
+    g.append(field("Culoare text", colorIn(b, "TextColor", st.TextColor)));
+    g.append(field("Rotunjire colțuri", numIn(b, "CornerRadius", String(st.CornerRadius)), "Doar pentru acest buton (gol = a ecranului)"));
+    g.append(field("Spațiu stânga", numIn(b, "InsetLeft", "0"), "px liberi în stânga butonului; latura se rotunjește și nu se mai lipește de vecin"));
+    g.append(field("Spațiu dreapta", numIn(b, "InsetRight", "0")));
+    g.append(field("Lățime iconiță", numIn(b, "IconWidth", String(st.IconSize), null, 1)));
+    g.append(field("Înălțime iconiță", numIn(b, "IconHeight", String(st.IconSize), null, 1)));
+  }
+  body.append(g);
+  const raw = el("textarea", {}); raw.value = JSON.stringify(b, null, 2);
+  const det = el("details", {}, el("summary", {}, "Avansat: JSON pentru acest buton"), raw,
+    el("div", { class: "row" }, el("button", { onclick: () => { try { layer[B] = JSON.parse(raw.value); changed(); } catch (e) { status("JSON invalid: " + e.message, "err"); } } }, "Aplică")));
+  body.append(det);
+}
+function move(d) { const layer = cfg.Layers[L]; const j = B + d; [layer[B], layer[j]] = [layer[j], layer[B]]; B = j; changed(); }
+
+function renderSettings() {
+  const gl = $("#tab-global"); gl.innerHTML = "";
+  for (const [k, type, def, hint] of GLOBALS)
+    gl.append(field(k, type === "bool" ? boolIn(cfg, k, def) : type === "num" ? numIn(cfg, k, String(def)) : textIn(cfg, k, String(def)), hint));
+  const sty = $("#tab-style"); sty.innerHTML = ""; cfg.Style = cfg.Style || {};
+  for (const [k, type, hint] of STYLES)
+    sty.append(field(k, type === "color" ? colorIn(cfg.Style, k, DEFAULT_STYLE[k]) : numIn(cfg.Style, k, String(DEFAULT_STYLE[k])), hint));
+  $("#rawjson").value = JSON.stringify(cfg, null, 2);
+}
+
+let settingsTimer;
+function changed() { renderBar(); renderLayers(); markDirty(); clearTimeout(settingsTimer); settingsTimer = setTimeout(() => { $("#rawjson").value = JSON.stringify(cfg, null, 2); }, 300);
+  const a = document.activeElement; // don't rebuild the editor under a field being typed in
+  const typing = a && a.closest && a.closest("#editor") && (a.tagName === "TEXTAREA" || (a.tagName === "INPUT" && a.type !== "button"));
+  if (!typing) renderEditor(); }
+function render() { renderLayers(); renderBar(); renderEditor(); markDirty(); }
+
+/* ---------- validation & io ---------- */
+function validate() {
+  const problems = [];
+  if (!cfg.Layers.length) problems.push("Trebuie cel puțin un ecran.");
+  cfg.Layers.forEach((l, i) => { if (!l.length) problems.push(`Ecranul ${i} nu are butoane.`);
+    l.forEach((b, j) => { const acts = [].concat(b.Action || []);
+      for (const a of acts) { const m = /^Layer(\d)$/.exec(a); if (m && +m[1] >= cfg.Layers.length) problems.push(`Ecranul ${i}, butonul ${j + 1}: ${a} nu există.`); }
+      for (const [key] of W_KEYS) if (b[key] !== undefined && !(b[key] > 0)) problems.push(`Ecranul ${i}, butonul ${j + 1}: ${key} trebuie > 0.`); });
+    const k = gridFor(l, meta.layerScale[i]); if (k === 60) problems.push(`Ecranul ${i}: lățimile nu se pot reprezenta exact (grila maximă ×60); folosește valori ca 0.25, 0.33, 0.5.`); });
+  return problems;
+}
+async function load() {
+  const r = await (await api("/api/config")).json();
+  cfg = r.config; meta = r.meta || {}; header = r.header;
+  if (!cfg.Layers) { // convert the two-layer form into Layers
+    const p = cfg.PrimaryLayerKeys || [{ Text: "esc", Action: "Esc" }], m = cfg.MediaLayerKeys || [{ Icon: "play_pause", Action: "PlayPause" }];
+    cfg.Layers = cfg.MediaLayerDefault ? [m, p] : [p, m]; delete cfg.PrimaryLayerKeys; delete cfg.MediaLayerKeys; delete cfg.MediaLayerDefault;
+  }
+  meta.layerNames = meta.layerNames || []; meta.layerScale = meta.layerScale || [];
+  const rawLayers = clone(cfg.Layers);
+  cfg.Layers = cfg.Layers.map((l, i) => toUnits(l, meta.layerScale[i] || 1));
+  if (location.search.includes("selftest")) { // round-trip check: units -> slots must equal the file
+    const back = cfg.Layers.map((l, i) => toSlots(l, gridFor(l, meta.layerScale[i] || 1)));
+    const same = JSON.stringify(back) === JSON.stringify(rawLayers);
+    const t = clone(cfg.Layers[0]); t.splice(1, 0, { Icon: "close", Stretch: 0.33 }); const kt = gridFor(t);
+    setTimeout(() => status(`SELFTEST roundtrip=${same} grid=${cfg.Layers.map(gridFor).join(",")} test033: k=${kt} slots=${toSlots(t, kt).map((b) => b.Stretch || 1).join(",")}`, same ? "ok" : "err"), 50);
+  }
+  saved = JSON.stringify({ cfg, meta }); L = Math.min(L, cfg.Layers.length - 1); B = -1;
+  const q = new URLSearchParams(location.search); // ?L=..&B=.. preselects (also used for tests)
+  if (q.has("L")) L = Math.min(+q.get("L"), cfg.Layers.length - 1);
+  if (q.has("B")) B = Math.min(+q.get("B"), cfg.Layers[L].length - 1);
+  if (!zoomSet) { const w = $(".barwrap").clientWidth; if (w > 100) $("#zoom").value = Math.max(0.35, Math.min(1.2, (w - 16) / BAR_W)).toFixed(2); zoomSet = true; }
+  renderSettings(); render(); status("Încărcat", "ok");
+}
+async function save() {
+  const p = validate(); if (p.length) { status(p[0], "err"); return; }
+  try {
+    tidyLayerStyles(); const out = clone(cfg); const scales = [];
+    out.Layers = cfg.Layers.map((l, i) => { const k = gridFor(l, meta.layerScale[i]); scales.push(k); return toSlots(l, k); });
+    const outMeta = Object.assign(clone(meta), { layerScale: scales });
+    const r = await (await api("/api/config", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ config: out, meta: outMeta, header: header || "Touch Bar (big-dfr). Editat cu touchbar-config." }) })).json();
+    if (r.error) throw new Error(r.error);
+    meta.layerScale = scales; saved = JSON.stringify({ cfg, meta }); status("Salvat · backup în " + r.backup, "ok");
+  } catch (e) { status("Eroare la salvare: " + e.message, "err"); }
+}
+async function capture() {
+  const w = $("#realwrap"); w.className = "hint"; w.textContent = "Se capturează…";
+  try {
+    const blob = await (await api("/api/frame")).blob(); const img = new Image(); img.src = URL.createObjectURL(blob); await img.decode();
+    const c = document.createElement("canvas"); c.width = img.height; c.height = img.width; const x = c.getContext("2d");
+    x.translate(0, img.width); x.rotate(-Math.PI / 2); x.drawImage(img, 0, 0); // panel is mounted rotated
+    w.className = ""; w.innerHTML = ""; const out = new Image(); out.src = c.toDataURL(); w.append(out,
+      el("div", { class: "hint", style: "margin-top:6px" }, "Ce afișează acum bara (ecranul activ în momentul capturii)."));
+  } catch (e) { w.className = "hint"; w.textContent = "Captura a eșuat: " + e.message; }
+}
+
+$("#save").onclick = save;
+$("#revert").onclick = () => { if (!dirty() || confirmRevert()) load(); };
+let revertArmed = 0;
+function confirmRevert() { if (Date.now() - revertArmed < 3000) return true; revertArmed = Date.now(); status("Apasă din nou în 3 s ca să renunți la modificări", "err"); return false; }
+$("#capture").onclick = capture;
+$("#quit").onclick = async () => { await api("/api/quit", { method: "POST" }).catch(() => {}); document.body.innerHTML = "<p style='padding:30px'>Serverul s-a oprit. Poți închide tab-ul.</p>"; };
+$("#zoom").oninput = renderBar;
+$("#addBtn").onclick = () => { const layer = cfg.Layers[L]; const b = newButton($("#addType").value); layer.splice(B >= 0 ? B + 1 : layer.length, 0, b); B = B >= 0 ? B + 1 : layer.length - 1; changed(); renderEditor(); };
+$("#addLayer").onclick = () => { if (cfg.LayerStyles) cfg.LayerStyles.push({}); cfg.Layers.push([{ Icon: "close", Action: "Layer0", OnClick: "Action" }, { Stretch: 3 }]); L = cfg.Layers.length - 1; B = -1; render(); };
+$("#delLayer").onclick = () => { if (cfg.Layers.length <= 1) return; cfg.Layers.splice(L, 1); meta.layerNames.splice(L, 1); meta.layerScale.splice(L, 1); if (cfg.LayerStyles) cfg.LayerStyles.splice(L, 1); tidyLayerStyles(); L = Math.max(0, L - 1); B = -1; render(); };
+function swapLayers(a, c) { if (c < 0 || c >= cfg.Layers.length) return; [cfg.Layers[a], cfg.Layers[c]] = [cfg.Layers[c], cfg.Layers[a]];
+  const n = meta.layerNames; [n[a], n[c]] = [n[c], n[a]]; const sc = meta.layerScale; [sc[a], sc[c]] = [sc[c], sc[a]];
+  if (cfg.LayerStyles) { layerStyle(Math.max(a, c)); const s = cfg.LayerStyles; [s[a], s[c]] = [s[c], s[a]]; tidyLayerStyles(); } L = c; render(); status("Atenție: acțiunile LayerN nu se renumerotează automat", "err"); }
+$("#upLayer").onclick = () => swapLayers(L, L - 1);
+$("#downLayer").onclick = () => swapLayers(L, L + 1);
+$("#layerName").oninput = (e) => { meta.layerNames[L] = e.target.value; renderLayers(); markDirty(); };
+document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => { tab = b.dataset.tab;
+  document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("sel", x === b));
+  for (const t of ["global", "style", "raw"]) $("#tab-" + t).hidden = t !== tab; if (tab === "raw") $("#rawjson").value = JSON.stringify(cfg, null, 2); });
+$("#applyRaw").onclick = () => { try { cfg = JSON.parse($("#rawjson").value); renderSettings(); render(); } catch (e) { status("JSON invalid: " + e.message, "err"); } };
+window.addEventListener("beforeunload", (e) => { if (dirty()) { e.preventDefault(); e.returnValue = ""; } });
+setInterval(() => api("/api/ping").catch(() => {}), 60000);
+document.addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); save(); } });
+
+(async () => {
+  icons = await (await api("/api/icons")).json();
+  document.body.append(el("datalist", { id: "keys" }, ...KEYS.map((k) => el("option", { value: k }))),
+    el("datalist", { id: "iconlist" }, ...icons.map((k) => el("option", { value: k }))));
+  await load();
+})().catch((e) => status("Nu pot încărca config-ul: " + e.message, "err"));
+</script>
+</body>
+</html>
