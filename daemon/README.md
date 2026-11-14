@@ -1,15 +1,15 @@
-# not-quite-tiny-dfr
+# big-dfr
 
-> [!NOTE]
-> Everything is only tested on my 2019 15" MacBook Pro running arch linux. Things may break in other distros/macs. If you are able to run this successfully on other machines without any issues, please email me at developer.seojoonlee@gmail.com. If you encountered any issues please create an issue or a PR. Contributions are always welcome. I will be adding a seperate "Supported Distros/Devices" section to this README in the near future.
-
-Not quite the most basic dynamic function row daemon possible. That will be [tiny-dfr](https://github.com/AsahiLinux/tiny-dfr). This is not-quite-tiny-dfr. A customizable Touch Bar daemon for Apple T2 and Silicon Macs, forked from [tiny-dfr](https://github.com/AsahiLinux/tiny-dfr). It adds full theming
-(colors, spacing, corners, fonts, background images), per-user configuration in
-`~/.config/not-quite-tiny-dfr/`, and custom widgets while trying to keep the footprint as light as possible.
+A customizable Touch Bar daemon for Apple T2 and Apple Silicon Macs. Forked
+from [big-dfr](https://github.com/emzmo/big-dfr), which
+in turn forked [tiny-dfr](https://github.com/AsahiLinux/tiny-dfr). It adds
+full theming (colors, spacing, corners, fonts, background images), per-user
+configuration in `~/.config/big-dfr/`, and custom widgets while trying to
+keep the footprint as light as possible.
 
 Config is merged from, in increasing precedence:
-`/usr/share/not-quite-tiny-dfr/config.toml` → `/etc/not-quite-tiny-dfr/config.toml`
-→ `~/.config/not-quite-tiny-dfr/config.toml`. All are live-reloaded so editing a config applies changes immediately to the touchbar.
+`/usr/share/big-dfr/config.toml` → `/etc/big-dfr/config.toml`
+→ `~/.config/big-dfr/config.toml`. All are live-reloaded so editing a config applies changes immediately to the touchbar.
 
 ## Configuration options
 
@@ -142,7 +142,7 @@ Colors are hex strings: `#rgb`, `#rgba`, `#rrggbb`, or `#rrggbbaa`.
 A widget runs a shell command every `Interval` seconds and shows its output:
 
 ```toml
-{ Command = "sh ~/.config/not-quite-tiny-dfr/my_widget.sh", Interval = 5, Stretch = 2 }
+{ Command = "sh ~/.config/big-dfr/my_widget.sh", Interval = 5, Stretch = 2 }
 ```
 
 The command's stdout is read as **JSON** if it looks like JSON, otherwise as
@@ -173,7 +173,7 @@ up yet at boot recovers in seconds instead of a full interval.
 > anything you can. The systemd unit sandboxes the daemon: your home directory
 > is mounted **read-only** (scripts can read but not write it), `/tmp` is
 > **private and writable** but wiped on restart, `$CACHE_DIRECTORY`
-> (`/var/cache/not-quite-tiny-dfr`, owned by the logged-in user) is **writable
+> (`/var/cache/big-dfr`, owned by the logged-in user) is **writable
 > and persistent** (use it for caches), and network access
 > (`AF_INET`/`AF_INET6`) is **enabled** so widgets like weather scripts work. If
 > you don't want network-capable widgets, remove `AF_INET AF_INET6` from
@@ -185,7 +185,7 @@ instantly, rather than polling) are planned but not yet implemented.
 ### Bundled widget scripts
 
 Scripts shipped with the app are installed to
-`/usr/share/not-quite-tiny-dfr/widgets/`:
+`/usr/share/big-dfr/widgets/`:
 
 - **`weather.sh`** — shows the current condition and temperature (e.g.
   `Partly Cloudy 29°C`) from [wttr.in](https://wttr.in). The location is
@@ -194,7 +194,7 @@ Scripts shipped with the app are installed to
   `-H` appends humidity, `-w` appends wind:
 
   ```toml
-  { Command = "sh /usr/share/not-quite-tiny-dfr/widgets/weather.sh -e -H Seoul", Interval = 900, Stretch = 3 }
+  { Command = "sh /usr/share/big-dfr/widgets/weather.sh -e -H Seoul", Interval = 900, Stretch = 3 }
   ```
 
   If the network or wttr.in is unavailable it falls back to the last cached
@@ -224,7 +224,7 @@ Scripts shipped with the app are installed to
   `DisplayDevice`):
 
   ```toml
-  { Command = "sh /usr/share/not-quite-tiny-dfr/widgets/battery.sh -w -f 96", Interval = 0, Stretch = 1 }
+  { Command = "sh /usr/share/big-dfr/widgets/battery.sh -w -f 96", Interval = 0, Stretch = 1 }
   ```
 
   It shows `battery n/a` if UPower isn't running or the device is absent.
@@ -267,9 +267,9 @@ The bundled battery pair is the worked example: percentage collapsed, ETA
 expanded.
 
 ```toml
-{ Command = "sh /usr/share/not-quite-tiny-dfr/widgets/battery.sh -t", Interval = 30,
+{ Command = "sh /usr/share/big-dfr/widgets/battery.sh -t", Interval = 30,
   OnClick = "Expand",
-  ExpandCommand = "sh /usr/share/not-quite-tiny-dfr/widgets/battery_eta.sh",
+  ExpandCommand = "sh /usr/share/big-dfr/widgets/battery_eta.sh",
   ExpandStretch = 3 }
 ```
 
@@ -440,12 +440,12 @@ a differently-named fork; see the module's own header comment for details).
 
 ```nix
 {
-  inputs.not-quite-tiny-dfr.url = "github:seojoonlee-dev/not-quite-tiny-dfr";
+  inputs.big-dfr.url = "github:nichols2124/big-dfr";
 
-  outputs = { nixpkgs, not-quite-tiny-dfr, ... }: {
+  outputs = { nixpkgs, big-dfr, ... }: {
     nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
       modules = [
-        not-quite-tiny-dfr.nixosModules.default
+        big-dfr.nixosModules.default
         {
           hardware.apple.touchBar = {
             enable = true;

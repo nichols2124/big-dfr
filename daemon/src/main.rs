@@ -270,7 +270,7 @@ enum TouchState {
 }
 
 impl TouchState {
-    /// Short label for NQTD_TOUCH_LOG diagnostics.
+    /// Short label for BIG_DFR_TOUCH_LOG diagnostics.
     fn name(&self) -> &'static str {
         match self {
             TouchState::Held { .. } => "held",
@@ -2573,10 +2573,10 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
     let mut last_flush = Instant::now();
     // Consecutive stalled flushes (see the cool-down at the flush site).
     let mut flush_stalls: u32 = 0;
-    // NQTD_FRAME_LOG=1 prints per-frame timings to the journal, for chasing
+    // BIG_DFR_FRAME_LOG=1 prints per-frame timings to the journal, for chasing
     // pacing problems on real hardware.
-    let frame_log = std::env::var_os("NQTD_FRAME_LOG").is_some_and(|v| v != "0");
-    let touch_log = std::env::var_os("NQTD_TOUCH_LOG").is_some_and(|v| v != "0");
+    let frame_log = std::env::var_os("BIG_DFR_FRAME_LOG").is_some_and(|v| v != "0");
+    let touch_log = std::env::var_os("BIG_DFR_TOUCH_LOG").is_some_and(|v| v != "0");
     // The battery reading whose rendering is currently on screen; battery
     // buttons only redraw when the poller's cache moves away from this.
     let mut last_battery_drawn = *BATTERY_STATE.lock().unwrap();
@@ -3825,7 +3825,7 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                 // rects; flushing zero clips is EINVAL (this crashed the daemon),
                 // so skip the frame entirely.
                 if !clips.is_empty() {
-                    // Diagnostic (NQTD_FRAME_LOG): flag any malformed dirty rect
+                    // Diagnostic (BIG_DFR_FRAME_LOG): flag any malformed dirty rect
                     // -- zero/inverted area -- a suspect for the appletbdrm "size
                     // mismatch" desync that then stalls every flush.
                     if frame_log {

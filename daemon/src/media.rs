@@ -1224,7 +1224,7 @@ mod tests {
     // CACHE_DIRECTORY, and parallel tests would race on the process env.
     #[test]
     fn disk_cache_roundtrip_collision_and_eviction() {
-        let dir = std::env::temp_dir().join(format!("nqtd-disk-cache-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("big-dfr-disk-cache-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         std::env::set_var("CACHE_DIRECTORY", &dir);
 
