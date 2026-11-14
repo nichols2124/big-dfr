@@ -2,7 +2,7 @@
 # (service adapted: no ibridge dependency)
 pkgname=big-dfr
 pkgver=0.3.7.af2d90a
-pkgrel=1
+pkgrel=2
 pkgdesc="Customizable Touch Bar daemon (tiny-dfr fork) with sliders, lyrics, dock, and more"
 arch=(x86_64)
 url="https://github.com/nichols2124/big-dfr"

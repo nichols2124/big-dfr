@@ -4501,6 +4501,15 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                     if let Some((target_layer, s_idx, v)) = opened_slider {
                                         let sx = down_x.get(&mtn.seat_slot()).copied().unwrap_or(start_x);
                                         layers[target_layer].hide_close = true;
+                                        // Record where we're leaving, same as the
+                                        // ShowLayer/REQUESTED_LAYER path at the top
+                                        // of the loop -- otherwise this direct
+                                        // press-and-drag handoff leaves
+                                        // LAYER_ENTRY_POINT stale from whatever
+                                        // layer switch happened last, and the
+                                        // slider popup's later DragCloseTimeout
+                                        // close returns there instead of here.
+                                        uinput::LAYER_ENTRY_POINT.store(layer, std::sync::atomic::Ordering::Relaxed);
                                         active_layer = target_layer;
                                         transition = begin_transition(&surface, &layers, layer, target_layer, &cfg, width as f64, last_touch_x, &mut popup_home);
                                         layers[target_layer].touch_slider(s_idx);

@@ -1524,7 +1524,7 @@ index 33c4398..968e474 100644
 +    GpuReading { temp, watts, usage }
  }
 diff --git a/src/main.rs b/src/main.rs
-index 8f49d42..a2277d4 100644
+index 8f49d42..b0e8cc5 100644
 --- a/src/main.rs
 +++ b/src/main.rs
 @@ -39,6 +39,7 @@ mod config;
@@ -1588,7 +1588,7 @@ index 8f49d42..a2277d4 100644
  /// Icons named in the config are looked up here first. Set once — either at
  /// startup if a user is already logged in, or later (from the main loop) the
  /// moment one logs in, when the daemon came up before anyone was logged in.
-@@ -275,7 +249,24 @@ enum TouchState {
+@@ -275,11 +249,28 @@ enum TouchState {
      },
      /// Dragging an expanded slider: the finger owns the gesture (no scroll or
      /// swipe can start from it) and its x maps straight to the value.
@@ -1614,6 +1614,11 @@ index 8f49d42..a2277d4 100644
  }
  
  impl TouchState {
+-    /// Short label for NQTD_TOUCH_LOG diagnostics.
++    /// Short label for BIG_DFR_TOUCH_LOG diagnostics.
+     fn name(&self) -> &'static str {
+         match self {
+             TouchState::Held { .. } => "held",
 @@ -287,6 +278,7 @@ impl TouchState {
              TouchState::Scroll { .. } => "scroll",
              TouchState::LayerSwipe { .. } => "swipe",
@@ -2788,6 +2793,20 @@ index 8f49d42..a2277d4 100644
      }
  
      let mut cfg_mgr = ConfigManager::new(cfg_paths, width, height);
+@@ -1729,10 +2573,10 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+     let mut last_flush = Instant::now();
+     // Consecutive stalled flushes (see the cool-down at the flush site).
+     let mut flush_stalls: u32 = 0;
+-    // NQTD_FRAME_LOG=1 prints per-frame timings to the journal, for chasing
++    // BIG_DFR_FRAME_LOG=1 prints per-frame timings to the journal, for chasing
+     // pacing problems on real hardware.
+-    let frame_log = std::env::var_os("NQTD_FRAME_LOG").is_some_and(|v| v != "0");
+-    let touch_log = std::env::var_os("NQTD_TOUCH_LOG").is_some_and(|v| v != "0");
++    let frame_log = std::env::var_os("BIG_DFR_FRAME_LOG").is_some_and(|v| v != "0");
++    let touch_log = std::env::var_os("BIG_DFR_TOUCH_LOG").is_some_and(|v| v != "0");
+     // The battery reading whose rendering is currently on screen; battery
+     // buttons only redraw when the poller's cache moves away from this.
+     let mut last_battery_drawn = *BATTERY_STATE.lock().unwrap();
 @@ -1740,9 +2584,14 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
      let mut last_cpu_temp_drawn = *CPU_TEMP_STATE.lock().unwrap();
      // Same, for the Cpu widget's watts mode.
@@ -3416,6 +3435,15 @@ index 8f49d42..a2277d4 100644
                      // Mid layer-swipe: composite both layers sliding along
                      // the bar, the incoming one exactly one slide-travel away
                      // so its content abuts the outgoing content seamlessly
+@@ -2591,7 +3825,7 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+                 // rects; flushing zero clips is EINVAL (this crashed the daemon),
+                 // so skip the frame entirely.
+                 if !clips.is_empty() {
+-                    // Diagnostic (NQTD_FRAME_LOG): flag any malformed dirty rect
++                    // Diagnostic (BIG_DFR_FRAME_LOG): flag any malformed dirty rect
+                     // -- zero/inverted area -- a suspect for the appletbdrm "size
+                     // mismatch" desync that then stalls every flush.
+                     if frame_log {
 @@ -2604,6 +3838,22 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                              println!("SUSPECT dirty rect(s): {bad:?}");
                          }
@@ -3670,7 +3698,7 @@ index 8f49d42..a2277d4 100644
                                          && multi
                                          && !has_swipe
                                          && !has_scroll;
-@@ -3104,38 +4484,96 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -3104,38 +4484,105 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                              }
                                          }
                                      }
@@ -3696,6 +3724,15 @@ index 8f49d42..a2277d4 100644
 +                                    if let Some((target_layer, s_idx, v)) = opened_slider {
 +                                        let sx = down_x.get(&mtn.seat_slot()).copied().unwrap_or(start_x);
 +                                        layers[target_layer].hide_close = true;
++                                        // Record where we're leaving, same as the
++                                        // ShowLayer/REQUESTED_LAYER path at the top
++                                        // of the loop -- otherwise this direct
++                                        // press-and-drag handoff leaves
++                                        // LAYER_ENTRY_POINT stale from whatever
++                                        // layer switch happened last, and the
++                                        // slider popup's later DragCloseTimeout
++                                        // close returns there instead of here.
++                                        uinput::LAYER_ENTRY_POINT.store(layer, std::sync::atomic::Ordering::Relaxed);
 +                                        active_layer = target_layer;
 +                                        transition = begin_transition(&surface, &layers, layer, target_layer, &cfg, width as f64, last_touch_x, &mut popup_home);
 +                                        layers[target_layer].touch_slider(s_idx);
@@ -3796,7 +3833,7 @@ index 8f49d42..a2277d4 100644
                                  }
                                  TouchState::Scroll {
                                      layer,
-@@ -3189,36 +4627,48 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -3189,36 +4636,48 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                      last_t_us,
                                      velocity,
                                  } => {
@@ -3871,7 +3908,7 @@ index 8f49d42..a2277d4 100644
                                      {
                                          if let Some((id, mute_arg)) = l.apply_slider_value(btn, v) {
                                              if let Some(arg) = mute_arg {
-@@ -3228,9 +4678,50 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -3228,9 +4687,50 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                          }
                                      }
                                  }
@@ -3922,7 +3959,7 @@ index 8f49d42..a2277d4 100644
                              let Some(state) = touches.remove(&up.seat_slot()) else {
                                  continue;
                              };
-@@ -3330,6 +4821,32 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -3330,6 +4830,32 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                              {
                                                  e.last_interaction = Instant::now();
                                              }
@@ -3955,7 +3992,7 @@ index 8f49d42..a2277d4 100644
                                          } else {
                                              let button = &mut layers[layer].buttons[btn].1;
                                              // Run OnClick shell command if present
-@@ -3346,8 +4863,20 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -3346,8 +4872,20 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                  TouchState::Pending { .. } => {}
                                  // Lifting off a slider restarts its idle
                                  // countdown from now.
@@ -3977,7 +4014,7 @@ index 8f49d42..a2277d4 100644
                                  }
                                  TouchState::Scroll {
                                      layer,
-@@ -3411,11 +4940,10 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -3411,11 +4949,10 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                          fling_tick = Instant::now();
                                      }
                                  }
@@ -3993,7 +4030,7 @@ index 8f49d42..a2277d4 100644
                                      let velocity = if up.time_usec().saturating_sub(last_t_us)
                                          > FLING_STALE_US
                                      {
-@@ -3423,33 +4951,59 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -3423,33 +4960,59 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                      } else {
                                          velocity
                                      };
@@ -4077,7 +4114,7 @@ index 8f49d42..a2277d4 100644
                              }
                          }
                          _ => {}
-@@ -3566,14 +5120,66 @@ mod tests {
+@@ -3566,14 +5129,66 @@ mod tests {
          )
      }
  
@@ -4150,7 +4187,7 @@ index 8f49d42..a2277d4 100644
      }
  
      #[test]
-@@ -3978,6 +5584,48 @@ mod tests {
+@@ -3978,6 +5593,48 @@ mod tests {
          assert_eq!(layer.hit(&style, W, H, x, y, Some(2)), None);
      }
  
@@ -4200,7 +4237,7 @@ index 8f49d42..a2277d4 100644
      fn non_scrollable_hit_unchanged() {
          let style = Style::default();
 diff --git a/src/media.rs b/src/media.rs
-index 6d6c1d7..b11690c 100644
+index 6d6c1d7..511915e 100644
 --- a/src/media.rs
 +++ b/src/media.rs
 @@ -103,7 +103,7 @@ pub fn run_tap_command(command: &str) {
@@ -4234,6 +4271,15 @@ index 6d6c1d7..b11690c 100644
          })?;
      Some(base.join(sub))
  }
+@@ -1224,7 +1224,7 @@ mod tests {
+     // CACHE_DIRECTORY, and parallel tests would race on the process env.
+     #[test]
+     fn disk_cache_roundtrip_collision_and_eviction() {
+-        let dir = std::env::temp_dir().join(format!("nqtd-disk-cache-{}", std::process::id()));
++        let dir = std::env::temp_dir().join(format!("big-dfr-disk-cache-{}", std::process::id()));
+         let _ = fs::remove_dir_all(&dir);
+         std::env::set_var("CACHE_DIRECTORY", &dir);
+ 
 diff --git a/src/motion.rs b/src/motion.rs
 new file mode 100644
 index 0000000..f1c382e
