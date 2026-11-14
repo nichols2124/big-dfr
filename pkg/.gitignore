@@ -1,0 +1,7 @@
+# makepkg build/package byproducts -- regenerated from PKGBUILD + the patch
+/src/
+/big-dfr/
+/pkg/
+/target-cache/
+*.pkg.tar.zst
+*.log
