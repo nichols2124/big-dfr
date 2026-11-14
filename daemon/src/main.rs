@@ -2931,7 +2931,11 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
             // button, not a hardcoded 0 -- identical to today for any layer
             // only ever entered from the control strip (its entry point IS
             // 0), but correct for one reachable from more than one place.
+            // LAYER_ENTRY_POINT can outlive a config reload that shrinks the
+            // layer count, so a stale value from before the reload must not
+            // be indexed as-is.
             let home = uinput::LAYER_ENTRY_POINT.load(std::sync::atomic::Ordering::Relaxed);
+            let home = if home < layers.len() { home } else { 0 };
             transition = begin_transition(
                 &surface, &layers, active_layer, home, &cfg, width as f64, last_touch_x, &mut popup_home,
             );
@@ -2977,6 +2981,9 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
             media::set_art_cache(cfg.media_art_cache);
             media::set_lyrics_cache(cfg.media_lyrics_cache);
             active_layer = 0;
+            // A reload can shrink the layer count; an entry point recorded
+            // under the old config could now point past the end of it.
+            uinput::LAYER_ENTRY_POINT.store(0, std::sync::atomic::Ordering::Relaxed);
             needs_complete_redraw = true;
             // Replacing the runtime drops the old one, stopping its threads.
             widget_rt = WidgetRuntime::new(new_widgets, wake_write.clone());
