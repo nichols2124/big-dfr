@@ -1,0 +1,99 @@
+# Touch Bar (big-dfr). Edit with touchbar-config.
+# Layer 0 = control strip, 1 = F1-F12 (Fn), 2 = media, 3 = brightness, 4 = volume, 5 = Expanded Control Strip.
+# Grid: one regular button = 3 slots.
+
+MotionStyle = "expressive"
+LayerSwipe = false
+LayerTimeout = 0
+DimTimeout = 0
+OffTimeout = 0
+ActiveBrightness = 255
+ShowButtonOutlines = true
+FontBold = true
+VisibleButtons = 0
+ScrollLoop = false
+LayerStyles = [{ ButtonSpacing = 1.5, CornerRadius = 7, EdgePadding = 3 }, {}, {}, {}, {}, {}, { ButtonSpacing = 1 }]
+
+Layers = [
+  [
+    { Icon = "chevron_left", Action = "Layer6", OnClick = "Action", Stretch = 4, CornerRadius = 6, InsetLeft = 0, InsetRight = 0 },
+    { Icon = "backlight_high", Action = "Layer5", OnClick = "Action", Stretch = 8, CornerRadius = 0 },
+    { Icon = "brightness_high", Action = "Layer3", OnClick = "Action", Stretch = 8, CornerRadius = 0 },
+    { Icon = "volume_up", Action = "Layer4", OnClick = "Action", Stretch = 8, CornerRadius = 0 },
+    { Command = "sh ~/.config/big-dfr/media-button.sh", Action = "Layer2", OnClick = "Action", Stretch = 10, Interval = 1, CornerRadius = 0 },
+  ],
+  [
+    { Text = "F1", Action = "F1", OnClick = "Action", Stretch = 10 },
+    {},
+    { Text = "F2", Action = "F2", OnClick = "Action", Stretch = 10 },
+    {},
+    { Text = "F3", Action = "F3", OnClick = "Action", Stretch = 10 },
+    {},
+    { Text = "F4", Action = "F4", OnClick = "Action", Stretch = 10 },
+    {},
+    { Text = "F5", Action = "F5", OnClick = "Action", Stretch = 10 },
+    {},
+    { Text = "F6", Action = "F6", OnClick = "Action", Stretch = 10 },
+    {},
+    { Text = "F7", Action = "F7", OnClick = "Action", Stretch = 10 },
+    {},
+    { Text = "F8", Action = "F8", OnClick = "Action", Stretch = 10 },
+    {},
+    { Text = "F9", Action = "F9", OnClick = "Action", Stretch = 10 },
+    {},
+    { Text = "F10", Action = "F10", OnClick = "Action", Stretch = 10 },
+    {},
+    { Text = "F11", Action = "F11", OnClick = "Action", Stretch = 10 },
+    {},
+    { Text = "F12", Action = "F12", OnClick = "Action", Stretch = 10 },
+  ],
+  [
+    { Icon = "close", Action = "Layer0", OnClick = "Action", Stretch = 6 },
+    { Time = "%H:%M", Stretch = 13, CornerRadius = 7 },
+    { Media = true, Stretch = 156 },
+  ],
+  [
+    { Stretch = 165 },
+    { Icon = "close", Action = "Layer0", OnClick = "Action", Stretch = 15 },
+    { Icon = "brightness_high", Stretch = 198, SliderGet = "brightnessctl -m -d gmux_backlight | cut -d, -f4 | tr -d %", SliderSet = "brightnessctl -q -n1 -d gmux_backlight set {}%", SliderLowIcon = "brightness_low", SliderStretch = 142, SliderOpen = true, Interval = 1 },
+    { Stretch = 110 },
+  ],
+  [
+    { Stretch = 120 },
+    { Icon = "close", Action = "Layer0", OnClick = "Action", Stretch = 11 },
+    { Icon = "volume_up", Stretch = 104, SliderGet = "wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '{print int($2*100) ($3==\"[MUTED]\" ? \" muted\" : \"\")}'", SliderSet = "wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ {}%", SliderMute = "wpctl set-mute @DEFAULT_AUDIO_SINK@ {}", SliderLowIcon = "volume_down", SliderMuteIcon = "volume_off", SliderStretch = 168, SliderOpen = true, Interval = 1 },
+    { Stretch = 80 },
+  ],
+  [
+    { Stretch = 150 },
+    { Icon = "close", Action = "Layer0", OnClick = "Action", Stretch = 14 },
+    { Icon = "backlight_high", Stretch = 180, SliderGet = "brightnessctl -m -d ':white:kbd_backlight' | cut -d, -f4 | tr -d %", SliderSet = "brightnessctl -q -d ':white:kbd_backlight' set {}%", SliderLowIcon = "backlight_low", SliderOpen = true, Interval = 1 },
+    { Stretch = 99 },
+  ],
+  [
+    { Icon = "close", Action = "Layer0", OnClick = "Action", Stretch = 3 },
+    { Stretch = 6 },
+    { Icon = "brightness_low", Action = "BrightnessDown", OnClick = "Action", Stretch = 6 },
+    { Icon = "brightness_high", Action = "BrightnessUp", OnClick = "Action", Stretch = 6 },
+    { Stretch = 2 },
+    { Stretch = 2 },
+    { Icon = "fast_rewind", Action = "PreviousSong", OnClick = "Action", Stretch = 6 },
+    { Icon = "play_pause", Action = "PlayPause", OnClick = "Action", Stretch = 6 },
+    { Icon = "fast_forward", Action = "NextSong", OnClick = "Action", Stretch = 6 },
+    { Stretch = 2 },
+    { Icon = "volume_off", Action = "Mute", OnClick = "Action", Stretch = 6 },
+    { Icon = "volume_down", Action = "VolumeDown", OnClick = "Action", Stretch = 6 },
+    { Icon = "volume_up", Action = "VolumeUp", OnClick = "Action", Stretch = 6 },
+  ],
+]
+
+[Style]
+Background = "#000000"
+TextColor = "#ffffff"
+ButtonSpacing = 0
+CornerRadius = 10
+SeparatorWidth = 4
+SeparatorOpacity = 0.55
+HeightPercent = 96
+IconSize = 42
+BatteryChargingColor = "#363636"
