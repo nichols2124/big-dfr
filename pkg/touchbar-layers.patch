@@ -262,10 +262,73 @@ diff --git a/share/not-quite-tiny-dfr/widgets/battery_eta.sh b/share/big-dfr/wid
 similarity index 100%
 rename from share/not-quite-tiny-dfr/widgets/battery_eta.sh
 rename to share/big-dfr/widgets/battery_eta.sh
+diff --git a/share/big-dfr/widgets/tty-toggle.sh b/share/big-dfr/widgets/tty-toggle.sh
+new file mode 100755
+index 0000000..ac45eb0
+--- /dev/null
++++ b/share/big-dfr/widgets/tty-toggle.sh
+@@ -0,0 +1,29 @@
++#!/bin/sh
++# Toggle: if you're on the graphical screen, jump to the first free text TTY
++# (not occupied by any logged-in session -- so not the greeter's/compositor's
++# either); if you're already on a text TTY, switch back to the graphical
++# screen. No state file needed: the graphical session's VT number stays
++# stable in loginctl no matter which TTY you're currently viewing.
++
++occupied=$(loginctl list-sessions --no-legend 2>/dev/null \
++    | awk '{print $1}' \
++    | while read -r id; do loginctl show-session "$id" -p VTNr --value 2>/dev/null; done \
++    | grep -v '^0$')
++
++graphical_vt=$(echo "$occupied" | head -1)
++graphical_vt=${graphical_vt:-1}
++
++active_vt=$(cat /sys/class/tty/tty0/active 2>/dev/null | sed 's/^tty//')
++
++if [ "$active_vt" = "$graphical_vt" ]; then
++    target=""
++    for vt in 2 3 4 5 6; do
++        if [ "$vt" != "$graphical_vt" ] && ! echo "$occupied" | grep -qx "$vt"; then
++            target="$vt"
++            break
++        fi
++    done
++    [ -n "$target" ] && chvt "$target"
++else
++    chvt "$graphical_vt"
++fi
 diff --git a/share/not-quite-tiny-dfr/widgets/weather.sh b/share/big-dfr/widgets/weather.sh
-similarity index 100%
+similarity index 87%
 rename from share/not-quite-tiny-dfr/widgets/weather.sh
 rename to share/big-dfr/widgets/weather.sh
+index eaaa03a..888c420 100644
+--- a/share/not-quite-tiny-dfr/widgets/weather.sh
++++ b/share/big-dfr/widgets/weather.sh
+@@ -1,5 +1,5 @@
+ #!/bin/sh
+-# Bundled default widget for not-quite-tiny-dfr.
++# Bundled default widget for big-dfr.
+ # Prints the current weather from wttr.in.
+ #
+ # Usage: weather.sh [-e] [-H] [-w] [location]
+@@ -9,7 +9,7 @@
+ # The location defaults to IP geolocation.
+ #
+ # Use it from your config:
+-#   { Command = "sh /usr/share/not-quite-tiny-dfr/widgets/weather.sh -e -H Seoul", Interval = 900, Stretch = 3 }
++#   { Command = "sh /usr/share/big-dfr/widgets/weather.sh -e -H Seoul", Interval = 900, Stretch = 3 }
+ 
+ cond="%C"
+ extra=""
+@@ -29,7 +29,7 @@ shift $((OPTIND - 1))
+ # show "weather n/a" when a fetch fails and we have never had a good reading.
+ # Under the systemd sandbox the home directory is read-only; CACHE_DIRECTORY
+ # (from the unit's CacheDirectory=) is the writable spot there.
+-cache_dir="${CACHE_DIRECTORY:-${XDG_CACHE_HOME:-$HOME/.cache}/not-quite-tiny-dfr}"
++cache_dir="${CACHE_DIRECTORY:-${XDG_CACHE_HOME:-$HOME/.cache}/big-dfr}"
+ cache_key=$(printf '%s' "$cond+%t$extra|$1" | tr -c 'A-Za-z0-9' '_')
+ cache_file="$cache_dir/weather_$cache_key"
+ 
 diff --git a/src/backlight.rs b/src/backlight.rs
 index 32b2174..287e908 100644
 --- a/src/backlight.rs
@@ -346,17 +409,12 @@ index 32b2174..287e908 100644
      }
  }
 diff --git a/src/button.rs b/src/button.rs
-index d5993d2..734cf08 100644
+index d5993d2..56ae8b0 100644
 --- a/src/button.rs
 +++ b/src/button.rs
-@@ -3,11 +3,11 @@
- //! tap-to-expand state, and image loading. `FunctionLayer` (in main) lays these
- //! out and drives their draw; the media panel itself lives in `render`.
- 
--use crate::config::{ButtonAction, ButtonConfig};
--use crate::render::{capsule, show_layout_centered, text_layout, MediaState};
-+use crate::config::{ButtonAction, ButtonConfig, DockAppConfig};
-+use crate::render::{capsule, rounded_rect_path, show_layout_centered, text_layout, MediaState};
+@@ -6,8 +6,8 @@
+ use crate::config::{ButtonAction, ButtonConfig};
+ use crate::render::{capsule, show_layout_centered, text_layout, MediaState};
  use crate::sensors::{
 -    find_battery_device, BatteryState, BATTERY_STATE, CPU_POWER_STATE, CPU_TEMP_STATE, GPU_LABEL,
 -    GPU_POWER_STATE, GPU_TEMP_STATE,
@@ -365,7 +423,7 @@ index d5993d2..734cf08 100644
  };
  use crate::style::{self, Color};
  use crate::uinput::toggle_keys;
-@@ -29,33 +29,89 @@ use std::os::fd::AsRawFd;
+@@ -29,30 +29,34 @@ use std::os::fd::AsRawFd;
  use std::path::{Path, PathBuf};
  use std::time::Instant;
  
@@ -408,62 +466,7 @@ index d5993d2..734cf08 100644
      label: bool,
  }
  
-+/// One pinned app inside a `Dock` widget; running/crashed are updated by a
-+/// poller that scans `/proc` for `match_pattern` (process name), so this has
-+/// no dependency on any particular compositor or window manager.
-+pub(crate) struct DockApp {
-+    pub(crate) name: String,
-+    pub(crate) launch: String,
-+    pub(crate) match_pattern: String,
-+    icon: Option<CachedSvg>,
-+    pub(crate) running: bool,
-+    pub(crate) crashed: bool,
-+}
-+
-+/// A `Dock` widget: a user-curated row of app launcher icons, embedded in
-+/// whatever slot it's given and scrolling internally (drag on it) when the
-+/// apps don't all fit -- a self-contained scroll, independent of the layer's
-+/// own band scroll used elsewhere (e.g. for VisibleButtons layers).
-+pub(crate) struct DockState {
-+    pub(crate) apps: Vec<DockApp>,
-+    /// How far the content has scrolled right, in px (0 = start, clamped to
-+    /// the content's overflow past the button's own width).
-+    pub(crate) scroll_offset: f64,
-+    /// Fling momentum in px/s after a drag release; 0 when not coasting.
-+    pub(crate) velocity: f64,
-+}
-+
-+impl DockState {
-+    /// Pixel pitch (tile width + gap) between consecutive app icons.
-+    pub(crate) fn pitch(icon_size: f64) -> f64 {
-+        icon_size + DOCK_TILE_GAP
-+    }
-+
-+    /// How far `scroll_offset` can go before the last icon's right edge
-+    /// reaches the button's own right edge (0 if everything already fits).
-+    pub(crate) fn max_scroll(&self, button_width: f64, icon_size: f64) -> f64 {
-+        let content = self.apps.len() as f64 * Self::pitch(icon_size);
-+        (content - button_width).max(0.0)
-+    }
-+
-+    /// The app index under bar position `x` (button-relative, i.e. already
-+    /// minus the button's own left edge), or `None` in a gap/past the end.
-+    pub(crate) fn index_at(&self, rel_x: f64, icon_size: f64) -> Option<usize> {
-+        if rel_x < 0.0 {
-+            return None;
-+        }
-+        let i = ((rel_x + self.scroll_offset) / Self::pitch(icon_size)) as usize;
-+        (i < self.apps.len()).then_some(i)
-+    }
-+}
-+
-+/// Gap in px between consecutive Dock app icons.
-+const DOCK_TILE_GAP: f64 = 14.0;
-+
- /// An SVG icon together with a cache of its rasterization. librsvg's
- /// `render_document` re-parses and re-rasterizes the SVG on every call, which is
- /// the dominant per-frame cost of a full-bar redraw while scrolling or rubber-
-@@ -143,6 +199,8 @@ pub(crate) struct ExpandState {
+@@ -143,6 +147,8 @@ pub(crate) struct ExpandState {
      /// `None` once settled. The layout switches instantly (hit testing uses
      /// the target); this only drives the drawn width's transition.
      pub(crate) anim: Option<Instant>,
@@ -472,7 +475,7 @@ index d5993d2..734cf08 100644
  }
  
  impl ExpandState {
-@@ -153,6 +211,7 @@ impl ExpandState {
+@@ -153,6 +159,7 @@ impl ExpandState {
              expanded_stretch: expanded_stretch.max(base_stretch),
              last_interaction: Instant::now(),
              anim: None,
@@ -480,7 +483,7 @@ index d5993d2..734cf08 100644
          }
      }
  
-@@ -200,6 +259,9 @@ impl ExpandState {
+@@ -200,6 +207,9 @@ impl ExpandState {
      /// Toggle the target state, starting the width animation. Returns whether
      /// anything changed (the caller then relayouts and forces a redraw).
      pub(crate) fn set_expanded(&mut self, expanded: bool) -> bool {
@@ -490,7 +493,7 @@ index d5993d2..734cf08 100644
          if self.expanded == expanded {
              return false;
          }
-@@ -224,6 +286,11 @@ pub(crate) struct SliderState {
+@@ -224,6 +234,11 @@ pub(crate) struct SliderState {
      pub(crate) low_icon: Option<CachedSvg>,
      /// Current value, 0-100.
      pub(crate) value: i32,
@@ -502,15 +505,7 @@ index d5993d2..734cf08 100644
      /// Whether the backing control reports itself muted (swaps in the mute
      /// icon).
      pub(crate) muted: bool,
-@@ -257,6 +324,7 @@ pub(crate) enum ButtonImage {
-     Gpu(GpuDisplay),
-     Slider(SliderState),
-     Media(MediaState),
-+    Dock(DockState),
-     /// A command widget: `text`/`color`/`icon` are updated from its script's
-     /// output. `icon_name` is the last icon the script asked for; `icon` is the
-     /// SVG resolved from it (via `theme`), reloaded only when the name changes.
-@@ -281,6 +349,9 @@ pub(crate) struct Button {
+@@ -281,6 +296,9 @@ pub(crate) struct Button {
      pub(crate) action: Vec<ButtonAction>,
      pub(crate) icon_width: f64,
      pub(crate) icon_height: f64,
@@ -520,7 +515,7 @@ index d5993d2..734cf08 100644
      // Per-button style overrides; fall back to the global Style when None.
      pub(crate) bg_color: Option<Color>,
      pub(crate) bg_color_active: Option<Color>,
-@@ -361,19 +432,19 @@ pub(crate) fn try_load_image(
+@@ -361,19 +379,19 @@ pub(crate) fn try_load_image(
          locations = candidates.into_iter().flatten().collect();
      } else {
          // Standard file icons, searched most-specific first: the user's
@@ -545,7 +540,7 @@ index d5993d2..734cf08 100644
          )));
          locations = candidates;
      };
-@@ -419,6 +490,12 @@ pub(crate) fn cpu_text(d: &CpuDisplay) -> String {
+@@ -419,6 +437,12 @@ pub(crate) fn cpu_text(d: &CpuDisplay) -> String {
              None => "n/a".to_string(),
          });
      }
@@ -558,7 +553,7 @@ index d5993d2..734cf08 100644
      if d.watts {
          parts.push(match *CPU_POWER_STATE.lock().unwrap() {
              Some(w) => format!("{w}W"),
-@@ -449,6 +526,12 @@ pub(crate) fn gpu_text(d: &GpuDisplay) -> String {
+@@ -449,6 +473,12 @@ pub(crate) fn gpu_text(d: &GpuDisplay) -> String {
              None => "n/a".to_string(),
          });
      }
@@ -571,21 +566,7 @@ index d5993d2..734cf08 100644
      if d.watts {
          parts.push(match *GPU_POWER_STATE.lock().unwrap() {
              Some(w) => format!("{w}W"),
-@@ -487,16 +570,26 @@ impl Button {
-             Button::new_cpu(cfg.action, &spec, cfg.cpu_label.unwrap_or(true))
-         } else if let Some(spec) = cfg.gpu {
-             Button::new_gpu(cfg.action, &spec, cfg.gpu_label.unwrap_or(true))
-+        } else if cfg.dock == Some(true) {
-+            Button::new_dock(
-+                cfg.action,
-+                cfg.dock_apps.unwrap_or_default(),
-+                cfg.theme.as_deref(),
-+                cfg.icon_width.unwrap_or(default_icon_size),
-+                cfg.icon_height.unwrap_or(default_icon_size),
-+            )
-         } else {
-             Button::new_spacer()
-         };
+@@ -493,10 +523,12 @@ impl Button {
          button.bg_color = bg_color;
          button.bg_color_active = bg_color_active;
          button.text_color = text_color;
@@ -598,7 +579,7 @@ index d5993d2..734cf08 100644
              action: vec![],
              active: false,
              changed: false,
-@@ -512,6 +605,7 @@ impl Button {
+@@ -512,6 +544,7 @@ impl Button {
      }
      pub(crate) fn new_text(text: String, action: Vec<ButtonAction>) -> Button {
          Button {
@@ -606,7 +587,7 @@ index d5993d2..734cf08 100644
              action,
              active: false,
              changed: false,
-@@ -533,12 +627,15 @@ impl Button {
+@@ -533,12 +566,15 @@ impl Button {
          tap_command: Option<String>,
      ) -> Button {
          Button {
@@ -624,7 +605,7 @@ index d5993d2..734cf08 100644
                  color: None,
                  theme,
                  icon_name: None,
-@@ -564,6 +661,7 @@ impl Button {
+@@ -564,6 +600,7 @@ impl Button {
          let image =
              try_load_image(path, theme, icon_width, icon_height).expect("failed to load icon");
          Button {
@@ -632,7 +613,7 @@ index d5993d2..734cf08 100644
              action,
              image,
              icon_width: icon_width as f64,
-@@ -623,6 +721,7 @@ impl Button {
+@@ -623,6 +660,7 @@ impl Button {
              _ => panic!("invalid battery mode, accepted modes: icon, percentage, both"),
          };
          Button {
@@ -640,7 +621,7 @@ index d5993d2..734cf08 100644
              action,
              active: false,
              changed: false,
-@@ -659,6 +758,7 @@ impl Button {
+@@ -659,6 +697,7 @@ impl Button {
          let muted_icon = muted_icon.map(|i| Self::load_battery_image(i, theme.as_ref()));
          let low_icon = low_icon.map(|i| Self::load_battery_image(i, theme.as_ref()));
          Button {
@@ -648,7 +629,7 @@ index d5993d2..734cf08 100644
              action: vec![],
              active: false,
              changed: false,
-@@ -668,6 +768,9 @@ impl Button {
+@@ -668,6 +707,9 @@ impl Button {
                  muted_icon,
                  low_icon,
                  value: 0,
@@ -658,7 +639,7 @@ index d5993d2..734cf08 100644
                  muted: false,
                  has_mute,
                  expand: ExpandState::new(base_stretch, expanded_stretch),
-@@ -689,6 +792,7 @@ impl Button {
+@@ -689,6 +731,7 @@ impl Button {
      ) -> Button {
          let load = |name| Some(Self::load_battery_image(name, theme.as_ref()));
          Button {
@@ -666,7 +647,7 @@ index d5993d2..734cf08 100644
              action: vec![],
              active: false,
              changed: false,
-@@ -723,14 +827,16 @@ impl Button {
+@@ -723,14 +766,16 @@ impl Button {
          // a journal line, not a daemon abort (this also runs on live reloads).
          let mut temp = None;
          let mut watts = false;
@@ -684,7 +665,7 @@ index d5993d2..734cf08 100644
                  }
              }
          }
-@@ -739,10 +845,11 @@ impl Button {
+@@ -739,10 +784,11 @@ impl Button {
              temp = Some(CpuTempUnit::Celsius);
          }
          Button {
@@ -697,63 +678,7 @@ index d5993d2..734cf08 100644
              icon_width: 0.0,
              icon_height: 0.0,
              bg_color: None,
-@@ -753,19 +860,72 @@ impl Button {
-         }
-     }
- 
-+    pub(crate) fn new_dock(
-+        action: Vec<ButtonAction>,
-+        apps: Vec<DockAppConfig>,
-+        theme: Option<&str>,
-+        icon_width: i32,
-+        icon_height: i32,
-+    ) -> Button {
-+        let apps = apps
-+            .into_iter()
-+            .filter_map(|a| {
-+                let launch = a.launch?;
-+                let match_pattern = a.match_pattern.clone().unwrap_or_else(|| launch.clone());
-+                let icon = a.icon.as_deref().and_then(|name| {
-+                    match try_load_image(name, theme, icon_width, icon_height) {
-+                        Ok(ButtonImage::Svg(svg)) => Some(svg),
-+                        Ok(ButtonImage::Bitmap(_)) => None, // dock tiles only cache SVGs today
-+                        _ => {
-+                            eprintln!(
-+                                "big-dfr: Dock app {:?}: icon {name:?} not found",
-+                                a.name.as_deref().unwrap_or(&launch)
-+                            );
-+                            None
-+                        }
-+                    }
-+                });
-+                Some(DockApp {
-+                    name: a.name.unwrap_or_else(|| launch.clone()),
-+                    launch,
-+                    match_pattern,
-+                    icon,
-+                    running: false,
-+                    crashed: false,
-+                })
-+            })
-+            .collect();
-+        Button {
-+        caption: None,
-+            action,
-+            active: false,
-+            changed: true,
-+            image: ButtonImage::Dock(DockState { apps, scroll_offset: 0.0, velocity: 0.0 }),
-+            icon_width: icon_width as f64,
-+            icon_height: icon_height as f64,
-+            bg_color: None,
-+            bg_color_active: None,
-+            text_color: None,
-+            highlight_on_tap: false,
-+            tap_command: None,
-+        }
-+    }
-+
-     pub(crate) fn new_gpu(action: Vec<ButtonAction>, spec: &str, label: bool) -> Button {
-         // Same space-separated component list as the Cpu widget; unknown tokens
+@@ -758,14 +804,16 @@ impl Button {
          // are a journal line, not a daemon abort (this runs on live reloads too).
          let mut temp = None;
          let mut watts = false;
@@ -771,7 +696,7 @@ index d5993d2..734cf08 100644
                  }
              }
          }
-@@ -774,10 +934,11 @@ impl Button {
+@@ -774,10 +822,11 @@ impl Button {
              temp = Some(CpuTempUnit::Celsius);
          }
          Button {
@@ -784,7 +709,7 @@ index d5993d2..734cf08 100644
              icon_width: 0.0,
              icon_height: 0.0,
              bg_color: None,
-@@ -806,6 +967,7 @@ impl Button {
+@@ -806,6 +855,7 @@ impl Button {
              .and_then(|l| Locale::try_from(l).ok())
              .unwrap_or(Locale::POSIX);
          Button {
@@ -792,7 +717,7 @@ index d5993d2..734cf08 100644
              action,
              active: false,
              changed: false,
-@@ -848,16 +1010,18 @@ impl Button {
+@@ -848,16 +898,18 @@ impl Button {
                  show_layout_centered(c, &layout, height, button_left_edge, button_width, y_shift);
              }
              ButtonImage::Svg(svg) => {
@@ -813,7 +738,7 @@ index d5993d2..734cf08 100644
                  c.set_source_surface(surf, x, y).unwrap();
                  c.rectangle(x, y, self.icon_width, self.icon_height);
                  c.fill().unwrap();
-@@ -995,7 +1159,8 @@ impl Button {
+@@ -995,7 +1047,8 @@ impl Button {
                  }
                  // Handle centered on the value, kept inside the track; the
                  // fill runs up to it.
@@ -823,7 +748,7 @@ index d5993d2..734cf08 100644
                      track_left + SLIDER_KNOB_RADIUS,
                      track_left + track_width - SLIDER_KNOB_RADIUS,
                  );
-@@ -1003,13 +1168,14 @@ impl Button {
+@@ -1003,13 +1056,14 @@ impl Button {
                  if fill > 0.0 {
                      capsule(c, track_left, track_y, fill, SLIDER_TRACK_HEIGHT);
                  }
@@ -845,53 +770,8 @@ index d5993d2..734cf08 100644
                  c.fill().unwrap();
              }
              ButtonImage::Command {
-@@ -1077,8 +1243,76 @@ impl Button {
-             // The media widget is painted in full by paint_media (it needs the
-             // rounded-rect geometry), so it never reaches this content pass.
+@@ -1079,6 +1133,31 @@ impl Button {
              ButtonImage::Media(_) => (),
-+            ButtonImage::Dock(dock) => {
-+                let pitch = DockState::pitch(self.icon_width);
-+                c.save().unwrap();
-+                c.rectangle(button_left_edge, 0.0, button_width as f64, height as f64);
-+                c.clip();
-+                let y = y_shift + ((height as f64 - self.icon_height) / 2.0).round();
-+                let first = (dock.scroll_offset / pitch).floor().max(0.0) as usize;
-+                for (i, app) in dock.apps.iter().enumerate().skip(first) {
-+                    let x = button_left_edge + i as f64 * pitch - dock.scroll_offset;
-+                    if x > button_left_edge + button_width as f64 {
-+                        break; // tiles are drawn left to right; the rest are off the right edge
-+                    }
-+                    if x + self.icon_width < button_left_edge {
-+                        continue; // scrolled fully past, off the left edge
-+                    }
-+                    match &app.icon {
-+                        Some(svg) => svg.render(c, x, y, self.icon_width, self.icon_height),
-+                        // No icon resolved for this app: a plain muted tile
-+                        // instead of silently drawing nothing (or panicking).
-+                        None => {
-+                            c.set_source_rgba(1.0, 1.0, 1.0, 0.25);
-+                            let r = (self.icon_width.min(self.icon_height) * 0.18).max(2.0);
-+                            rounded_rect_path(
-+                                c,
-+                                x,
-+                                self.icon_width,
-+                                r,
-+                                y,
-+                                y + self.icon_height,
-+                            );
-+                            c.fill().unwrap();
-+                        }
-+                    }
-+                    if app.running {
-+                        let cx = x + self.icon_width / 2.0;
-+                        let cy = y + self.icon_height + 5.0;
-+                        c.set_source_rgba(1.0, 1.0, 1.0, if app.crashed { 0.9 } else { 0.55 });
-+                        c.arc(cx, cy, 2.2, 0.0, std::f64::consts::TAU);
-+                        c.fill().unwrap();
-+                    }
-+                }
-+                c.restore().unwrap();
-+            }
              ButtonImage::Spacer => (),
          }
 +        if let Some(caption) = &self.caption {
@@ -922,7 +802,7 @@ index d5993d2..734cf08 100644
      }
      /// The tap-to-expand state shared by Slider and OnClick = Expand command
      /// widgets, or `None` for buttons that don't expand.
-@@ -1119,6 +1353,9 @@ impl Button {
+@@ -1119,6 +1198,9 @@ impl Button {
      where
          F: AsRawFd,
      {
@@ -932,7 +812,7 @@ index d5993d2..734cf08 100644
          if self.active != active {
              self.active = active;
              self.changed = true;
-@@ -1140,12 +1377,28 @@ impl Button {
+@@ -1140,12 +1222,28 @@ impl Button {
      where
          F: AsRawFd,
      {
@@ -961,7 +841,7 @@ index d5993d2..734cf08 100644
          if let ButtonImage::Battery(_, _) = &self.image {
              let (_, state) = *BATTERY_STATE.lock().unwrap();
              match state {
-@@ -1166,3 +1419,106 @@ impl Button {
+@@ -1166,3 +1264,57 @@ impl Button {
          }
      }
  }
@@ -1018,58 +898,9 @@ index d5993d2..734cf08 100644
 +        assert_eq!(gpu_text(&d), "n/a");
 +    }
 +
-+    fn dock_app(name: &str) -> DockApp {
-+        DockApp {
-+            name: name.to_string(),
-+            launch: name.to_string(),
-+            match_pattern: name.to_string(),
-+            icon: None,
-+            running: false,
-+            crashed: false,
-+        }
-+    }
-+
-+    #[test]
-+    fn dock_pitch_is_icon_plus_gap() {
-+        assert_eq!(DockState::pitch(40.0), 40.0 + DOCK_TILE_GAP);
-+    }
-+
-+    #[test]
-+    fn dock_max_scroll_is_zero_when_everything_fits() {
-+        let dock = DockState { apps: vec![dock_app("a"), dock_app("b")], scroll_offset: 0.0, velocity: 0.0 };
-+        assert_eq!(dock.max_scroll(1000.0, 40.0), 0.0);
-+    }
-+
-+    #[test]
-+    fn dock_max_scroll_is_overflow_past_button_width() {
-+        let dock = DockState {
-+            apps: vec![dock_app("a"), dock_app("b"), dock_app("c")],
-+            scroll_offset: 0.0,
-+            velocity: 0.0,
-+        };
-+        let pitch = DockState::pitch(40.0);
-+        assert_eq!(dock.max_scroll(pitch, 40.0), 2.0 * pitch);
-+    }
-+
-+    #[test]
-+    fn dock_index_at_resolves_scrolled_tiles() {
-+        let dock = DockState {
-+            apps: vec![dock_app("a"), dock_app("b"), dock_app("c")],
-+            scroll_offset: DockState::pitch(40.0),
-+            velocity: 0.0,
-+        };
-+        assert_eq!(dock.index_at(0.0, 40.0), Some(1));
-+        assert_eq!(dock.index_at(-5.0, 40.0), None);
-+    }
-+
-+    #[test]
-+    fn dock_index_at_none_past_the_last_app() {
-+        let dock = DockState { apps: vec![dock_app("a")], scroll_offset: 0.0, velocity: 0.0 };
-+        assert_eq!(dock.index_at(1000.0, 40.0), None);
-+    }
 +}
 diff --git a/src/config.rs b/src/config.rs
-index 5a6244b..78823c4 100644
+index 5a6244b..a197d02 100644
 --- a/src/config.rs
 +++ b/src/config.rs
 @@ -20,7 +20,7 @@ use std::{
@@ -1168,7 +999,7 @@ index 5a6244b..78823c4 100644
              _ => Key::deserialize(de::value::StrDeserializer::new(&name)).map(ButtonAction::Key),
          }
      }
-@@ -260,12 +312,46 @@ where
+@@ -260,12 +312,30 @@ where
      deserializer.deserialize_any(ArrayOrSingle)
  }
  
@@ -1186,22 +1017,6 @@ index 5a6244b..78823c4 100644
 +    pub timeout: Option<f64>,
 +}
 +
-+/// One pinned app inside a `Dock` widget (`DockApps = [{...}, ...]`).
-+/// `Match` is a process name (as seen in `/proc/<pid>/comm`) used to tell
-+/// whether the app is running -- generic, so the dock core does not depend on
-+/// any particular window manager or compositor.
-+#[derive(Deserialize, Default, Clone, Debug)]
-+#[serde(rename_all = "PascalCase")]
-+pub struct DockAppConfig {
-+    /// Shown only as a tooltip/identifier; the bar itself just shows the icon.
-+    pub name: Option<String>,
-+    pub icon: Option<String>,
-+    /// Shell command that starts the app (passed to `sh -c`).
-+    pub launch: Option<String>,
-+    #[serde(rename = "Match")]
-+    pub match_pattern: Option<String>,
-+}
-+
  #[derive(Deserialize, Default)]
  #[serde(rename_all = "PascalCase")]
  pub struct ButtonConfig {
@@ -1215,7 +1030,7 @@ index 5a6244b..78823c4 100644
      pub theme: Option<String>,
      pub time: Option<String>,
      pub battery: Option<String>,
-@@ -328,12 +414,27 @@ pub struct ButtonConfig {
+@@ -328,6 +398,14 @@ pub struct ButtonConfig {
      pub slider_mute: Option<String>,
      pub slider_mute_icon: Option<String>,
      pub slider_low_icon: Option<String>,
@@ -1230,20 +1045,7 @@ index 5a6244b..78823c4 100644
      pub slider_stretch: Option<usize>,
      // A media widget: shows transport controls (previous / play-pause / next)
      // that, while a player is running, join into a panel backed by the album
-     // cover with the track title and artist. Driven by playerctl (MPRIS); taps
-     // control the active player. Spans `stretch` slots.
-     pub media: Option<bool>,
-+    // A Dock widget: launcher icons for a user-curated list of apps, embedded
-+    // directly in whatever layer/slot it's placed, scrolling internally (drag
-+    // left/right on it) when the apps don't all fit in its Stretch width.
-+    // Tapping a non-running app's icon launches it; `IconWidth`/`IconHeight`
-+    // (or the global IconSize) set each app tile's icon size.
-+    pub dock: Option<bool>,
-+    pub dock_apps: Option<Vec<DockAppConfig>>,
- }
- 
- /// The stock Esc + F1-F12 primary layer, used when the config sets no
-@@ -405,6 +506,7 @@ fn esc_button() -> ButtonConfig {
+@@ -405,6 +483,7 @@ fn esc_button() -> ButtonConfig {
      ButtonConfig {
          icon: None,
          text: Some("esc".into()),
@@ -1251,7 +1053,7 @@ index 5a6244b..78823c4 100644
          theme: None,
          action: vec![ButtonAction::Key(Key::Esc)],
          pinned: Some(true),
-@@ -428,11 +530,17 @@ fn esc_button() -> ButtonConfig {
+@@ -428,6 +507,10 @@ fn esc_button() -> ButtonConfig {
          slider_mute: None,
          slider_mute_icon: None,
          slider_low_icon: None,
@@ -1262,14 +1064,7 @@ index 5a6244b..78823c4 100644
          slider_stretch: None,
          on_click: Some(OnClick::Action),
          expand_command: None,
-         expand_stretch: None,
-         media: None,
-+        dock: None,
-+        dock_apps: None,
-     }
- }
- 
-@@ -455,6 +563,7 @@ fn error_layer(message: &str) -> FunctionLayer {
+@@ -455,6 +538,7 @@ fn error_layer(message: &str) -> FunctionLayer {
          ButtonConfig {
              icon: None,
              text: Some(message.to_string()),
@@ -1277,7 +1072,7 @@ index 5a6244b..78823c4 100644
              theme: None,
              action: vec![], // inert: shows the message, sends nothing
              pinned: None,
-@@ -478,11 +587,17 @@ fn error_layer(message: &str) -> FunctionLayer {
+@@ -478,6 +562,10 @@ fn error_layer(message: &str) -> FunctionLayer {
              slider_mute: None,
              slider_mute_icon: None,
              slider_low_icon: None,
@@ -1288,14 +1083,7 @@ index 5a6244b..78823c4 100644
              slider_stretch: None,
              on_click: None,
              expand_command: None,
-             expand_stretch: None,
-             media: None,
-+            dock: None,
-+            dock_apps: None,
-         },
-     ];
-     FunctionLayer::with_config(
-@@ -511,7 +626,7 @@ fn resolve_image_path(path: &str) -> Option<PathBuf> {
+@@ -511,7 +599,7 @@ fn resolve_image_path(path: &str) -> Option<PathBuf> {
              return Some(candidate);
          }
      }
@@ -1304,7 +1092,7 @@ index 5a6244b..78823c4 100644
          let candidate = Path::new(base).join(path);
          if candidate.exists() {
              return Some(candidate);
-@@ -611,7 +726,7 @@ fn load_config(
+@@ -611,7 +699,7 @@ fn load_config(
              Ok(text) => match toml::from_str::<ConfigProxy>(&text) {
                  Ok(over) => base.merge(over),
                  Err(e) => {
@@ -1313,7 +1101,7 @@ index 5a6244b..78823c4 100644
                      let name = path
                          .file_name()
                          .and_then(|n| n.to_str())
-@@ -620,7 +735,7 @@ fn load_config(
+@@ -620,7 +708,7 @@ fn load_config(
                  }
              },
              Err(e) if e.kind() == ErrorKind::NotFound => {}
@@ -1322,7 +1110,7 @@ index 5a6244b..78823c4 100644
          }
      }
  
-@@ -636,7 +751,7 @@ fn load_config(
+@@ -636,7 +724,7 @@ fn load_config(
          let blur = style_proxy.background_image_blur.unwrap_or(false);
          match load_background_image(path, width as i32, height as i32, blur) {
              Ok(surf) => style.background_image = Some(surf),
@@ -1331,7 +1119,7 @@ index 5a6244b..78823c4 100644
          }
      }
      // Default icon size for buttons that don't set their own IconWidth/Height.
-@@ -650,7 +765,7 @@ fn load_config(
+@@ -650,7 +738,7 @@ fn load_config(
          Some(sets) if sets.iter().any(|s| !s.is_empty()) => {
              let (kept, empty): (Vec<_>, Vec<_>) = sets.into_iter().partition(|s| !s.is_empty());
              if !empty.is_empty() {
@@ -1340,7 +1128,7 @@ index 5a6244b..78823c4 100644
              }
              kept
          }
-@@ -674,7 +789,7 @@ fn load_config(
+@@ -674,7 +762,7 @@ fn load_config(
      // parse error keeps precedence -- these key sets may be a stale mix.
      if config_error.is_none() {
          if let Some(err) = pin_mismatch_error(&key_sets) {
@@ -1349,7 +1137,7 @@ index 5a6244b..78823c4 100644
              config_error = Some(err);
          }
      }
-@@ -703,10 +818,12 @@ fn load_config(
+@@ -703,10 +791,12 @@ fn load_config(
              let pin_swipe = base
                  .pinned_ignore_layer_swipe
                  .unwrap_or(DEFAULT_PINNED_IGNORE_LAYER_SWIPE);
@@ -1364,7 +1152,7 @@ index 5a6244b..78823c4 100644
                          keys,
                          &mut widgets,
                          &mut next_id,
-@@ -716,11 +833,17 @@ fn load_config(
+@@ -716,11 +806,17 @@ fn load_config(
                          scroll_rubber_band,
                          pin_scroll,
                          pin_swipe,
@@ -1383,7 +1171,7 @@ index 5a6244b..78823c4 100644
      let cfg = Config {
          show_button_outlines: base
              .show_button_outlines
-@@ -738,6 +861,11 @@ fn load_config(
+@@ -738,6 +834,11 @@ fn load_config(
          dim_timeout: base.dim_timeout.unwrap_or(DEFAULT_DIM_TIMEOUT),
          off_timeout: base.off_timeout.unwrap_or(DEFAULT_OFF_TIMEOUT),
          layer_swipe: base.layer_swipe.unwrap_or(DEFAULT_LAYER_SWIPE),
@@ -1395,7 +1183,7 @@ index 5a6244b..78823c4 100644
          lyric_offset: base.lyric_offset.unwrap_or(DEFAULT_LYRIC_OFFSET),
          media_cover_blur: base
              .media_cover_blur
-@@ -759,7 +887,7 @@ fn load_config(
+@@ -759,7 +860,7 @@ fn load_config(
  /// file arrive (IN_MOVED_TO/IN_CREATE) and stays valid across saves.
  ///
  /// `wd` is `None` when the directory does not exist yet (e.g. before the user
@@ -1404,7 +1192,7 @@ index 5a6244b..78823c4 100644
  /// config dropped in later starts being watched.
  struct Watch {
      /// The directory we arm the inotify watch on (a config file's parent).
-@@ -846,7 +974,7 @@ impl ConfigManager {
+@@ -846,7 +947,7 @@ impl ConfigManager {
          layers: &mut Vec<FunctionLayer>,
      ) -> Option<Widgets> {
          // Pick up directories that did not exist when we last tried to watch
@@ -1413,7 +1201,7 @@ index 5a6244b..78823c4 100644
          let mut newly_armed = false;
          for watch in &mut self.watches {
              if watch.wd.is_none() {
-@@ -922,8 +1050,8 @@ mod tests {
+@@ -922,8 +1023,8 @@ mod tests {
      fn shipped_template_parses() {
          // The template ships fully commented (a reference); it must still parse
          // to an all-None proxy, and the code defaults must supply valid layers.
@@ -1524,7 +1312,7 @@ index 33c4398..968e474 100644
 +    GpuReading { temp, watts, usage }
  }
 diff --git a/src/main.rs b/src/main.rs
-index 8f49d42..7c682e9 100644
+index 8f49d42..9059cfc 100644
 --- a/src/main.rs
 +++ b/src/main.rs
 @@ -39,6 +39,7 @@ mod config;
@@ -1541,8 +1329,8 @@ index 8f49d42..7c682e9 100644
      find_battery_device, find_cpu_temp_zone, get_battery_state, open_cpu_power_source,
 -    read_cpu_temp, read_energy_uj, BATTERY_STATE, CPU_POWER_STATE, CPU_TEMP_STATE,
 -    GPU_LABEL, GPU_POWER_STATE, GPU_TEMP_STATE,
-+    read_cpu_jiffies, read_cpu_temp, read_energy_uj, scan_dock_processes, BATTERY_STATE,
-+    CPU_POWER_STATE, CPU_TEMP_STATE, CPU_USAGE_STATE, DOCK_PROC_GEN, DOCK_PROC_STATE, GPU_LABEL,
++    read_cpu_jiffies, read_cpu_temp, read_energy_uj, BATTERY_STATE,
++    CPU_POWER_STATE, CPU_TEMP_STATE, CPU_USAGE_STATE, GPU_LABEL,
 +    GPU_POWER_STATE, GPU_TEMP_STATE, GPU_USAGE_STATE,
  };
  
@@ -1588,7 +1376,7 @@ index 8f49d42..7c682e9 100644
  /// Icons named in the config are looked up here first. Set once — either at
  /// startup if a user is already logged in, or later (from the main loop) the
  /// moment one logs in, when the daemon came up before anyone was logged in.
-@@ -275,11 +249,28 @@ enum TouchState {
+@@ -275,11 +249,18 @@ enum TouchState {
      },
      /// Dragging an expanded slider: the finger owns the gesture (no scroll or
      /// swipe can start from it) and its x maps straight to the value.
@@ -1601,16 +1389,6 @@ index 8f49d42..7c682e9 100644
 +        /// instead of jumping to the finger's absolute position.
 +        rel: Option<(f64, i32)>,
 +    },
-+    /// Dragging a Dock widget's own app-icon row: the finger owns the
-+    /// button's internal scroll (not the layer's band), exactly like
-+    /// SliderDrag owns a slider rather than the layer.
-+    DockDrag {
-+        layer: usize,
-+        btn: usize,
-+        last_x: f64,
-+        last_t_us: u64,
-+        velocity: f64,
-+    },
  }
  
  impl TouchState {
@@ -1619,15 +1397,7 @@ index 8f49d42..7c682e9 100644
      fn name(&self) -> &'static str {
          match self {
              TouchState::Held { .. } => "held",
-@@ -287,6 +278,7 @@ impl TouchState {
-             TouchState::Scroll { .. } => "scroll",
-             TouchState::LayerSwipe { .. } => "swipe",
-             TouchState::SliderDrag { .. } => "slider",
-+            TouchState::DockDrag { .. } => "dock",
-         }
-     }
- }
-@@ -472,26 +464,109 @@ fn paint_button(
+@@ -472,22 +453,104 @@ fn paint_button(
          );
          return;
      }
@@ -1733,12 +1503,7 @@ index 8f49d42..7c682e9 100644
      displays_time: bool,
      displays_battery: bool,
      displays_cpu: bool,
-     displays_gpu: bool,
-+    displays_dock: bool,
-     displays_media: bool,
-     buttons: Vec<(usize, Button)>,
-     virtual_button_count: usize,
-@@ -533,15 +608,16 @@ pub struct FunctionLayer {
+@@ -533,15 +596,16 @@ pub struct FunctionLayer {
  fn slide_params(
      layers: &[FunctionLayer],
      active: usize,
@@ -1759,7 +1524,7 @@ index 8f49d42..7c682e9 100644
      };
      let a = &layers[active];
      let stay = a.swipe_pinned_slots() > 0
-@@ -554,17 +630,146 @@ fn slide_params(
+@@ -554,10 +618,138 @@ fn slide_params(
      (incoming, travel, stay)
  }
  
@@ -1898,16 +1663,7 @@ index 8f49d42..7c682e9 100644
  fn rotate_touch_layers<K>(touches: &mut HashMap<K, TouchState>, n: usize, left: bool) {
      for state in touches.values_mut() {
          match state {
-             TouchState::Held { layer, .. }
-             | TouchState::Pending { layer, .. }
-             | TouchState::Scroll { layer, .. }
--            | TouchState::SliderDrag { layer, .. } => {
-+            | TouchState::SliderDrag { layer, .. }
-+            | TouchState::DockDrag { layer, .. } => {
-                 *layer = if left {
-                     (*layer + n - 1) % n
-                 } else {
-@@ -661,7 +866,320 @@ impl FunctionLayer {
+@@ -661,7 +853,320 @@ impl FunctionLayer {
      /// content then abuts the outgoing content seamlessly instead of towing
      /// an Esc-sized hole behind it. With nothing held still it is the full
      /// bar width.
@@ -2228,7 +1984,7 @@ index 8f49d42..7c682e9 100644
          if self.swipe_pinned_slots() == 0 {
              return width;
          }
-@@ -681,7 +1199,7 @@ impl FunctionLayer {
+@@ -681,7 +1186,7 @@ impl FunctionLayer {
      /// (they never change); each expandable contributes its current width.
      fn relayout(&mut self) {
          let old_count = self.virtual_button_count;
@@ -2237,7 +1993,7 @@ index 8f49d42..7c682e9 100644
              .map(|i| {
                  let next = if i + 1 < self.buttons.len() {
                      self.buttons[i + 1].0
-@@ -690,10 +1208,26 @@ impl FunctionLayer {
+@@ -690,10 +1195,26 @@ impl FunctionLayer {
                  };
                  match self.buttons[i].1.expand_state() {
                      Some(e) => e.current_stretch(),
@@ -2265,7 +2021,7 @@ index 8f49d42..7c682e9 100644
          let mut acc = 0;
          for (i, (idx, _)) in self.buttons.iter_mut().enumerate() {
              *idx = acc;
-@@ -750,6 +1284,8 @@ impl FunctionLayer {
+@@ -750,6 +1271,8 @@ impl FunctionLayer {
      /// On-screen left edge and width of button `i`, mirroring the renderer's
      /// geometry (including the band's current scroll offset).
      fn button_screen_rect(&self, i: usize, bar_width: f64, style: &style::Style) -> Option<(f64, f64)> {
@@ -2274,7 +2030,7 @@ index 8f49d42..7c682e9 100644
          let start = self.buttons.get(i)?.0;
          let end = if i + 1 < self.buttons.len() {
              self.buttons[i + 1].0
-@@ -806,6 +1342,35 @@ impl FunctionLayer {
+@@ -806,6 +1329,35 @@ impl FunctionLayer {
          Some((((x - track_left) / track_width) * 100.0).round().clamp(0.0, 100.0) as i32)
      }
  
@@ -2310,7 +2066,7 @@ index 8f49d42..7c682e9 100644
      /// Apply a dragged slider value, returning the widget id whose set command
      /// should run when the value actually moved, along with the mute-command
      /// arg the move implies: `"1"` when reaching 0 auto-mutes, `"0"` when
-@@ -821,6 +1386,9 @@ impl FunctionLayer {
+@@ -821,6 +1373,9 @@ impl FunctionLayer {
              return None;
          };
          s.expand.last_interaction = Instant::now();
@@ -2320,7 +2076,7 @@ index 8f49d42..7c682e9 100644
          if s.value == value {
              return None;
          }
-@@ -856,6 +1424,8 @@ impl FunctionLayer {
+@@ -856,6 +1411,8 @@ impl FunctionLayer {
      /// The scroll layout for this layer, or `None` when it doesn't scroll
      /// (scrolling disabled, or all the buttons already fit).
      fn scroll_geometry(&self, width: f64, style: &style::Style) -> Option<ScrollGeometry> {
@@ -2329,11 +2085,9 @@ index 8f49d42..7c682e9 100644
          let scroll_slots = self.virtual_button_count - self.pinned_slots;
          if self.visible_slots == 0 || scroll_slots <= self.visible_slots {
              return None;
-@@ -943,7 +1513,17 @@ impl FunctionLayer {
-         let displays_battery = cfg.iter().any(|cfg| cfg.battery.is_some());
+@@ -944,6 +1501,15 @@ impl FunctionLayer {
          let displays_cpu = cfg.iter().any(|cfg| cfg.cpu.is_some());
          let displays_gpu = cfg.iter().any(|cfg| cfg.gpu.is_some());
-+        let displays_dock = cfg.iter().any(|cfg| cfg.dock == Some(true));
          let displays_media = cfg.iter().any(|cfg| cfg.media == Some(true));
 +        let base_stretch: Vec<usize> = cfg.iter().map(|c| c.stretch.unwrap_or(1).max(1)).collect();
 +        let extras: Vec<ButtonExtras> = cfg
@@ -2347,7 +2101,7 @@ index 8f49d42..7c682e9 100644
          let buttons = cfg
              .into_iter()
              .scan(&mut virtual_button_count, |state, mut cfg| {
-@@ -976,7 +1556,8 @@ impl FunctionLayer {
+@@ -976,7 +1542,8 @@ impl FunctionLayer {
                          mute_command: cfg.slider_mute.take(),
                          interval: WidgetSpec::interval_from_secs(cfg.interval),
                      });
@@ -2357,7 +2111,7 @@ index 8f49d42..7c682e9 100644
                          id,
                          cfg.icon.as_deref(),
                          cfg.slider_mute_icon.as_deref(),
-@@ -986,7 +1567,14 @@ impl FunctionLayer {
+@@ -986,7 +1553,14 @@ impl FunctionLayer {
                          cfg.slider_stretch.unwrap_or(DEFAULT_SLIDER_STRETCH),
                          cfg.icon_width.unwrap_or(default_icon_size),
                          has_mute,
@@ -2373,7 +2127,7 @@ index 8f49d42..7c682e9 100644
                  } else if cfg.media == Some(true) {
                      let tap_command = match cfg.on_click.take() {
                          Some(OnClick::Command(c)) => Some(c),
-@@ -1035,7 +1623,7 @@ impl FunctionLayer {
+@@ -1035,7 +1609,7 @@ impl FunctionLayer {
                              }
                              None => {
                                  eprintln!(
@@ -2382,7 +2136,7 @@ index 8f49d42..7c682e9 100644
                                       ExpandCommand; ignoring"
                                  );
                                  None
-@@ -1058,7 +1646,18 @@ impl FunctionLayer {
+@@ -1058,7 +1632,18 @@ impl FunctionLayer {
                          tap_command,
                      )
                  } else {
@@ -2402,7 +2156,7 @@ index 8f49d42..7c682e9 100644
                  };
                  button.highlight_on_tap = highlight_on_tap;
                  Some((i, button))
-@@ -1073,10 +1672,28 @@ impl FunctionLayer {
+@@ -1073,6 +1658,23 @@ impl FunctionLayer {
              virtual_button_count
          };
          FunctionLayer {
@@ -2426,12 +2180,7 @@ index 8f49d42..7c682e9 100644
              displays_time,
              displays_battery,
              displays_cpu,
-             displays_gpu,
-+            displays_dock,
-             displays_media,
-             buttons,
-             virtual_button_count,
-@@ -1115,7 +1732,8 @@ impl FunctionLayer {
+@@ -1115,7 +1717,8 @@ impl FunctionLayer {
          let c = Context::new(surface).unwrap();
          c.translate(height as f64, 0.0);
          c.rotate((90.0f64).to_radians());
@@ -2441,7 +2190,7 @@ index 8f49d42..7c682e9 100644
          // The buttons that hold still for THIS slide (0 when the transition
          // partner's pinning doesn't match).
          let static_count = if slide_pins {
-@@ -1195,6 +1813,10 @@ impl FunctionLayer {
+@@ -1195,6 +1798,10 @@ impl FunctionLayer {
                      self.virtual_button_count
                  };
                  let (start, button) = &mut self.buttons[i];
@@ -2452,7 +2201,7 @@ index 8f49d42..7c682e9 100644
                  if !button.changed && !complete_redraw {
                      continue;
                  }
-@@ -1260,6 +1882,10 @@ impl FunctionLayer {
+@@ -1260,6 +1867,10 @@ impl FunctionLayer {
                      self.virtual_button_count
                  };
                  let (start, button) = &mut self.buttons[i];
@@ -2463,7 +2212,7 @@ index 8f49d42..7c682e9 100644
                  if !button.changed && !complete_redraw {
                      continue;
                  }
-@@ -1349,7 +1975,64 @@ impl FunctionLayer {
+@@ -1349,7 +1960,64 @@ impl FunctionLayer {
          }
  
          c.save().unwrap();
@@ -2529,7 +2278,7 @@ index 8f49d42..7c682e9 100644
              if i == static_count {
                  // Everything after the held-still buttons slides with a
                  // layer swipe, behind a clip that keeps it off their area.
-@@ -1373,8 +2056,38 @@ impl FunctionLayer {
+@@ -1373,8 +2041,38 @@ impl FunctionLayer {
              } else {
                  self.virtual_button_count
              };
@@ -2568,7 +2317,7 @@ index 8f49d42..7c682e9 100644
  
              if !button.changed && !complete_redraw {
                  continue;
-@@ -1408,6 +2121,38 @@ impl FunctionLayer {
+@@ -1408,6 +2106,38 @@ impl FunctionLayer {
                  );
                  c.fill().unwrap();
              }
@@ -2607,7 +2356,7 @@ index 8f49d42..7c682e9 100644
              paint_button(
                  &c,
                  button,
-@@ -1421,6 +2166,54 @@ impl FunctionLayer {
+@@ -1421,6 +2151,54 @@ impl FunctionLayer {
                  height,
                  pixel_shift_y,
              );
@@ -2662,7 +2411,7 @@ index 8f49d42..7c682e9 100644
  
              button.changed = false;
  
-@@ -1453,6 +2246,8 @@ impl FunctionLayer {
+@@ -1453,6 +2231,8 @@ impl FunctionLayer {
          y: f64,
          i: Option<usize>,
      ) -> Option<usize> {
@@ -2671,7 +2420,7 @@ index 8f49d42..7c682e9 100644
          let spacing = style.button_spacing;
          let edge = style.edge_padding;
          if y < 0.1 * height as f64 || y > 0.9 * height as f64 {
-@@ -1461,7 +2256,7 @@ impl FunctionLayer {
+@@ -1461,7 +2241,7 @@ impl FunctionLayer {
  
          if let Some(geo) = self.scroll_geometry(width as f64, style) {
              let pitch = geo.pitch;
@@ -2680,7 +2429,7 @@ index 8f49d42..7c682e9 100644
                  // Pinned (Esc) region.
                  let rel = x - edge;
                  let slot = (rel.max(0.0) / pitch) as usize;
-@@ -1489,6 +2284,14 @@ impl FunctionLayer {
+@@ -1489,6 +2269,14 @@ impl FunctionLayer {
                      None // in the gap between buttons
                  }
              };
@@ -2695,7 +2444,7 @@ index 8f49d42..7c682e9 100644
              // For motion tracking (`i` set), report a hit only while the finger
              // is still over that same button.
              return match i {
-@@ -1514,6 +2317,16 @@ impl FunctionLayer {
+@@ -1514,6 +2302,16 @@ impl FunctionLayer {
              return None;
          }
  
@@ -2712,7 +2461,7 @@ index 8f49d42..7c682e9 100644
          let start = self.buttons[i].0;
          let end = if i + 1 < self.buttons.len() {
              self.buttons[i + 1].0
-@@ -1550,6 +2363,14 @@ fn chown_recursive(dir: &std::path::Path, uid: u32, gid: u32) {
+@@ -1550,6 +2348,14 @@ fn chown_recursive(dir: &std::path::Path, uid: u32, gid: u32) {
      }
  }
  
@@ -2727,7 +2476,7 @@ index 8f49d42..7c682e9 100644
  /// Drop root down to `user`, keeping the supplementary `groups` (input/video)
  /// needed for device access. Privilege dropping is one-way, so this is only
  /// called once we actually know which user to serve.
-@@ -1563,11 +2384,51 @@ fn drop_privileges(user: &str, groups: &[&str]) {
+@@ -1563,11 +2369,51 @@ fn drop_privileges(user: &str, groups: &[&str]) {
      if let (Some(u), Ok(dir)) = (&u, std::env::var("CACHE_DIRECTORY")) {
          chown_recursive(dir.as_ref(), u.uid.as_raw(), u.gid.as_raw());
      }
@@ -2779,7 +2528,7 @@ index 8f49d42..7c682e9 100644
      // Give child processes (widget and slider commands) the user's session
      // environment: PipeWire tools (wpctl) locate the session via
      // XDG_RUNTIME_DIR, and scripts expect ~ to be the user's home, not root's.
-@@ -1684,17 +2545,17 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -1684,17 +2530,17 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
      // main loop below -- dropping to the user and loading their ~/.config the
      // moment they log in. Privilege dropping is one-way, so staying root until
      // then is exactly what lets a late login still take effect.
@@ -2801,7 +2550,7 @@ index 8f49d42..7c682e9 100644
              u.name,
              dir.display()
          );
-@@ -1702,7 +2563,7 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -1702,7 +2548,7 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
          let _ = USER_ICON_DIR.set(Some(dir.clone()));
          cfg_paths.push(dir.join("config.toml"));
      } else {
@@ -2810,7 +2559,7 @@ index 8f49d42..7c682e9 100644
      }
  
      let mut cfg_mgr = ConfigManager::new(cfg_paths, width, height);
-@@ -1729,10 +2590,10 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -1729,10 +2575,10 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
      let mut last_flush = Instant::now();
      // Consecutive stalled flushes (see the cool-down at the flush site).
      let mut flush_stalls: u32 = 0;
@@ -2824,7 +2573,7 @@ index 8f49d42..7c682e9 100644
      // The battery reading whose rendering is currently on screen; battery
      // buttons only redraw when the poller's cache moves away from this.
      let mut last_battery_drawn = *BATTERY_STATE.lock().unwrap();
-@@ -1740,9 +2601,14 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -1740,9 +2586,12 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
      let mut last_cpu_temp_drawn = *CPU_TEMP_STATE.lock().unwrap();
      // Same, for the Cpu widget's watts mode.
      let mut last_cpu_power_drawn = *CPU_POWER_STATE.lock().unwrap();
@@ -2835,44 +2584,18 @@ index 8f49d42..7c682e9 100644
      let mut last_gpu_temp_drawn = *GPU_TEMP_STATE.lock().unwrap();
      let mut last_gpu_power_drawn = *GPU_POWER_STATE.lock().unwrap();
 +    let mut last_gpu_usage_drawn = *GPU_USAGE_STATE.lock().unwrap();
-+    // Same, for Dock buttons' running/crashed indicators.
-+    let mut last_dock_proc_gen = DOCK_PROC_GEN.load(std::sync::atomic::Ordering::Relaxed);
      // The media generation currently on screen; the Media widget redraws when
      // the poller publishes a new status / track / album art.
      let mut last_media_gen = MEDIA_STATE.lock().unwrap().generation;
-@@ -1861,35 +2727,104 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -1861,6 +2710,46 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
              }
          });
      }
--    // GPU temperature + power poller: mirrors the CPU pollers, but one thread
--    // reads both sensors from whichever source the detected GPU exposes
--    // (amdgpu/i915 hwmon, or nvidia-smi). All are readable unprivileged, so --
--    // unlike RAPL -- nothing needs opening while root.
--    if let Some(gpu) = gpu::Gpu::detect() {
--        *GPU_LABEL.lock().unwrap() = gpu.vendor.label();
--        let seed = gpu.read();
--        *GPU_TEMP_STATE.lock().unwrap() = seed.temp;
--        *GPU_POWER_STATE.lock().unwrap() = seed.watts;
 +    // CPU utilization poller: % = 1 - idle_delta/total_delta between two
 +    // /proc/stat samples. Unprivileged (no pre-drop file handle needed, unlike
 +    // the RAPL power poller above).
 +    {
-         let wake = wake_write.clone();
--        thread::spawn(move || loop {
--            let reading = gpu.read();
--            let changed = {
--                let mut temp = GPU_TEMP_STATE.lock().unwrap();
--                let mut power = GPU_POWER_STATE.lock().unwrap();
--                let changed = *temp != reading.temp || *power != reading.watts;
--                *temp = reading.temp;
--                *power = reading.watts;
--                changed
--            };
--            if changed {
--                let byte = [1u8];
--                unsafe {
--                    libc::write(wake.as_raw_fd(), byte.as_ptr() as *const libc::c_void, 1);
--                }
++        let wake = wake_write.clone();
 +        thread::spawn(move || {
 +            let mut last = read_cpu_jiffies();
 +            loop {
@@ -2908,68 +2631,31 @@ index 8f49d42..7c682e9 100644
 +            }
 +        });
 +    }
-+    // GPU temperature + power poller: mirrors the CPU pollers, but one thread
-+    // reads both sensors from whichever source the detected GPU exposes
-+    // (amdgpu/i915 hwmon, or nvidia-smi). All are readable unprivileged, so --
-+    // unlike RAPL -- nothing needs opening while root.
-+    if let Some(gpu) = gpu::Gpu::detect() {
-+        *GPU_LABEL.lock().unwrap() = gpu.vendor.label();
-+        let seed = gpu.read();
-+        *GPU_TEMP_STATE.lock().unwrap() = seed.temp;
-+        *GPU_POWER_STATE.lock().unwrap() = seed.watts;
+     // GPU temperature + power poller: mirrors the CPU pollers, but one thread
+     // reads both sensors from whichever source the detected GPU exposes
+     // (amdgpu/i915 hwmon, or nvidia-smi). All are readable unprivileged, so --
+@@ -1870,15 +2759,19 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+         let seed = gpu.read();
+         *GPU_TEMP_STATE.lock().unwrap() = seed.temp;
+         *GPU_POWER_STATE.lock().unwrap() = seed.watts;
 +        *GPU_USAGE_STATE.lock().unwrap() = seed.usage;
-+        let wake = wake_write.clone();
-+        thread::spawn(move || loop {
-+            let reading = gpu.read();
-+            let changed = {
-+                let mut temp = GPU_TEMP_STATE.lock().unwrap();
-+                let mut power = GPU_POWER_STATE.lock().unwrap();
+         let wake = wake_write.clone();
+         thread::spawn(move || loop {
+             let reading = gpu.read();
+             let changed = {
+                 let mut temp = GPU_TEMP_STATE.lock().unwrap();
+                 let mut power = GPU_POWER_STATE.lock().unwrap();
+-                let changed = *temp != reading.temp || *power != reading.watts;
 +                let mut usage = GPU_USAGE_STATE.lock().unwrap();
 +                let changed =
 +                    *temp != reading.temp || *power != reading.watts || *usage != reading.usage;
-+                *temp = reading.temp;
-+                *power = reading.watts;
+                 *temp = reading.temp;
+                 *power = reading.watts;
 +                *usage = reading.usage;
-+                changed
-+            };
-+            if changed {
-+                let byte = [1u8];
-+                unsafe {
-+                    libc::write(wake.as_raw_fd(), byte.as_ptr() as *const libc::c_void, 1);
-+                }
-             }
-             thread::sleep(CPU_TEMP_POLL);
-         });
-     }
-+    // Dock app running/crashed poller: a full /proc rescan every couple of
-+    // seconds (see scan_dock_processes). Generic -- no compositor or window
-+    // manager involved, just process names -- so Dock apps show their running
-+    // state regardless of what's managing the windows.
-+    {
-+        *DOCK_PROC_STATE.lock().unwrap() = scan_dock_processes();
-+        let wake = wake_write.clone();
-+        thread::spawn(move || loop {
-+            thread::sleep(CPU_TEMP_POLL);
-+            let reading = scan_dock_processes();
-+            let changed = {
-+                let mut shared = DOCK_PROC_STATE.lock().unwrap();
-+                let changed = *shared != reading;
-+                *shared = reading;
-+                changed
-+            };
-+            if changed {
-+                DOCK_PROC_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-+                let byte = [1u8];
-+                unsafe {
-+                    libc::write(wake.as_raw_fd(), byte.as_ptr() as *const libc::c_void, 1);
-+                }
-+            }
-+        });
-+    }
-     // Now-playing media polling (playerctl / MPRIS): same wake-pipe pattern as
-     // the battery/CPU pollers. Harmless when there is no player (reports Idle).
-     media::spawn_poller(wake_write.clone());
-@@ -1905,9 +2840,16 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+                 changed
+             };
+             if changed {
+@@ -1905,9 +2798,16 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
  
      let mut surface =
          ImageSurface::create(Format::ARgb32, db_width as i32, db_height as i32).unwrap();
@@ -2986,7 +2672,7 @@ index 8f49d42..7c682e9 100644
  
      let mut input_tb = Libinput::new_with_udev(Interface);
      let mut input_main = Libinput::new_with_udev(Interface);
-@@ -1946,12 +2888,87 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -1946,12 +2846,87 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
  
      let mut digitizer: Option<InputDevice> = None;
      let mut touches = HashMap::new();
@@ -3074,7 +2760,7 @@ index 8f49d42..7c682e9 100644
          // Deferred startup: if we came up before anyone was logged in, poll
          // logind (throttled) for a login. When one appears, attach the user's
          // ~/.config layer, drop to them, reload, and bring their widgets up
-@@ -1959,9 +2976,9 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -1959,9 +2934,9 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
          if !privileges_dropped && last_user_poll.elapsed() >= USER_POLL_INTERVAL {
              last_user_poll = Instant::now();
              if let Some(u) = user::resolve_target_user() {
@@ -3086,7 +2772,7 @@ index 8f49d42..7c682e9 100644
                      u.name,
                      dir.display()
                  );
-@@ -1987,16 +3004,63 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -1987,16 +2962,63 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
              media::set_art_cache(cfg.media_art_cache);
              media::set_lyrics_cache(cfg.media_lyrics_cache);
              active_layer = 0;
@@ -3151,22 +2837,7 @@ index 8f49d42..7c682e9 100644
                      match &layers.get(layer)?.buttons.get(btn)?.1.image {
                          ButtonImage::Slider(s) => Some(s.id),
                          _ => None,
-@@ -2027,10 +3091,12 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
-             }
-             // A slider has no key to hold down: keep it Pending so a finger held
-             // still still resolves to expand-on-tap (see the Up handler) rather
--            // than a dead Held state that swallows the tap.
-+            // than a dead Held state that swallows the tap. A Dock button is
-+            // the same -- it sends no key either, and a long hold is reserved
-+            // for its own future context-menu gesture.
-             if matches!(
-                 layers.get(layer).and_then(|l| l.buttons.get(btn)),
--                Some((_, b)) if matches!(b.image, ButtonImage::Slider(_))
-+                Some((_, b)) if matches!(b.image, ButtonImage::Slider(_) | ButtonImage::Dock(_))
-             ) {
-                 continue;
-             }
-@@ -2064,7 +3130,7 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -2064,7 +3086,7 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
              let fingered: Vec<(usize, usize)> = touches
                  .values()
                  .filter_map(|t| match *t {
@@ -3175,7 +2846,7 @@ index 8f49d42..7c682e9 100644
                      _ => None,
                  })
                  .collect();
-@@ -2239,12 +3305,17 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -2239,12 +3261,17 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
          if let Some(target) = layer_slide_target {
              let delta = target - layer_shift;
              if delta.abs() <= SNAP_EPSILON {
@@ -3199,7 +2870,7 @@ index 8f49d42..7c682e9 100644
                  }
                  layer_shift = 0.0;
                  layer_slide_target = None;
-@@ -2258,21 +3329,30 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -2258,21 +3285,30 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                  .values()
                  .any(|t| matches!(t, TouchState::LayerSwipe { .. }))
          {
@@ -3243,61 +2914,15 @@ index 8f49d42..7c682e9 100644
          }
          for (i, layer) in layers.iter_mut().enumerate() {
              // Self-heal any non-finite scroll state: NaN fails every settle
-@@ -2295,7 +3375,8 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
-                     TouchState::Held { layer, .. }
-                     | TouchState::Pending { layer, .. }
-                     | TouchState::Scroll { layer, .. }
--                    | TouchState::SliderDrag { layer, .. } => layer == i,
-+                    | TouchState::SliderDrag { layer, .. }
-+                    | TouchState::DockDrag { layer, .. } => layer == i,
-                     // A layer swipe holds the slide, not any band stretch.
-                     TouchState::LayerSwipe { .. } => false,
-                 });
-@@ -2401,6 +3482,43 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -2401,7 +3437,6 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                  needs_complete_redraw = true;
              }
          }
-+        // A Dock widget's own internal scroll coasts independently of the
-+        // layer's band scroll above (it's a self-contained strip -- Stage 1
-+        // keeps it simple: plain exponential decay, hard-clamped at either
-+        // end with no rubber-band or slot snap).
-+        for (i, layer) in layers.iter_mut().enumerate() {
-+            for btn in 0..layer.buttons.len() {
-+                let coasting = matches!(
-+                    &layer.buttons[btn].1.image,
-+                    ButtonImage::Dock(dock) if dock.velocity != 0.0
-+                );
-+                if !coasting {
-+                    continue;
-+                }
-+                let Some((_, button_width)) = layer.button_screen_rect(btn, width as f64, &cfg.style) else {
-+                    continue;
-+                };
-+                let icon_width = layer.buttons[btn].1.icon_width;
-+                let ButtonImage::Dock(dock) = &mut layer.buttons[btn].1.image else {
-+                    unreachable!()
-+                };
-+                let max = dock.max_scroll(button_width, icon_width);
-+                dock.scroll_offset = (dock.scroll_offset - dock.velocity * anim_dt).clamp(0.0, max);
-+                if dock.scroll_offset <= 0.0 || dock.scroll_offset >= max {
-+                    dock.velocity = 0.0; // hit an end: stop dead, no bounce
-+                } else {
-+                    dock.velocity *= (-anim_dt / FLING_FRICTION_TAU).exp();
-+                    if dock.velocity.abs() < FLING_STOP_VELOCITY {
-+                        dock.velocity = 0.0;
-+                    }
-+                }
-+                layer.buttons[btn].1.changed = true;
-+                scroll_animating = true;
-+                if i == active_layer {
-+                    needs_complete_redraw = true;
-+                }
-+            }
-+        }
- 
+-
          let now = Local::now();
          let ms_left = ((60 - now.second()) * 1000) as i32;
-@@ -2459,9 +3577,14 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+         let mut next_timeout_ms = min(ms_left, TIMEOUT_MS);
+@@ -2459,9 +3494,14 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
          if layers[active_layer].displays_cpu {
              let reading = *CPU_TEMP_STATE.lock().unwrap();
              let power = *CPU_POWER_STATE.lock().unwrap();
@@ -3313,7 +2938,7 @@ index 8f49d42..7c682e9 100644
                  for button in &mut layers[active_layer].buttons {
                      if let ButtonImage::Cpu(_) = button.1.image {
                          button.1.changed = true;
-@@ -2472,9 +3595,14 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -2472,9 +3512,14 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
          if layers[active_layer].displays_gpu {
              let reading = *GPU_TEMP_STATE.lock().unwrap();
              let power = *GPU_POWER_STATE.lock().unwrap();
@@ -3329,36 +2954,7 @@ index 8f49d42..7c682e9 100644
                  for button in &mut layers[active_layer].buttons {
                      if let ButtonImage::Gpu(_) = button.1.image {
                          button.1.changed = true;
-@@ -2482,6 +3610,28 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
-                 }
-             }
-         }
-+        if layers[active_layer].displays_dock {
-+            let gen = DOCK_PROC_GEN.load(std::sync::atomic::Ordering::Relaxed);
-+            if gen != last_dock_proc_gen {
-+                last_dock_proc_gen = gen;
-+                let proc_state = DOCK_PROC_STATE.lock().unwrap().clone();
-+                for button in &mut layers[active_layer].buttons {
-+                    if let ButtonImage::Dock(dock) = &mut button.1.image {
-+                        for app in &mut dock.apps {
-+                            let (running, crashed) = proc_state
-+                                .get(&app.match_pattern)
-+                                .copied()
-+                                .unwrap_or((false, false));
-+                            if app.running != running || app.crashed != crashed {
-+                                app.running = running;
-+                                app.crashed = crashed;
-+                                button.1.changed = true;
-+                            }
-+                        }
-+                    }
-+                }
-+            }
-+        }
-         if layers[active_layer].displays_media {
-             let generation = MEDIA_STATE.lock().unwrap().generation;
-             let lyrics_gen = LYRICS_STATE.lock().unwrap().generation;
-@@ -2506,6 +3656,20 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -2506,6 +3551,20 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
          // clip. Full-bar draw is cheap (~4 ms with the SVG cache), and widget
          // ticks are seconds apart. (The 1 px keep-warm heartbeat never stalls in
          // the logs, so tiny clips are fine -- only widget-sized ones are toxic.)
@@ -3379,7 +2975,7 @@ index 8f49d42..7c682e9 100644
          if !needs_complete_redraw && layers[active_layer].buttons.iter().any(|b| b.1.changed) {
              needs_complete_redraw = true;
          }
-@@ -2535,7 +3699,100 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -2535,7 +3594,100 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                  } else {
                      (0.0, 0.0)
                  };
@@ -3481,7 +3077,7 @@ index 8f49d42..7c682e9 100644
                      // Mid layer-swipe: composite both layers sliding along
                      // the bar, the incoming one exactly one slide-travel away
                      // so its content abuts the outgoing content seamlessly
-@@ -2591,7 +3848,7 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -2591,7 +3743,7 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                  // rects; flushing zero clips is EINVAL (this crashed the daemon),
                  // so skip the frame entirely.
                  if !clips.is_empty() {
@@ -3490,7 +3086,7 @@ index 8f49d42..7c682e9 100644
                      // -- zero/inverted area -- a suspect for the appletbdrm "size
                      // mismatch" desync that then stalls every flush.
                      if frame_log {
-@@ -2604,6 +3861,22 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -2604,6 +3756,22 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                              println!("SUSPECT dirty rect(s): {bad:?}");
                          }
                      }
@@ -3513,7 +3109,7 @@ index 8f49d42..7c682e9 100644
                      let data = surface.data().unwrap();
                      {
                          let mut map = drm.map().unwrap();
-@@ -2745,6 +4018,22 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -2745,6 +3913,22 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
              next_timeout_ms = min(next_timeout_ms, until.as_millis().max(1) as i32);
          }
  
@@ -3536,7 +3132,7 @@ index 8f49d42..7c682e9 100644
          match epoll.wait(
              &mut [EpollEvent::new(EpollFlags::EPOLLIN, 0)],
              next_timeout_ms as u16,
-@@ -2779,7 +4068,7 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -2779,7 +3963,7 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                  Event::Keyboard(KeyboardEvent::Key(key)) => {
                      // Fn peeks at the next layer; with a single layer there is
                      // nothing to peek at (or swap to).
@@ -3545,7 +3141,7 @@ index 8f49d42..7c682e9 100644
                          if cfg.double_press_switch_layers > 0
                              && key.key_state() == KeyState::Pressed
                          {
-@@ -2791,8 +4080,15 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -2791,8 +3975,15 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                              last = Instant::now();
                          }
                          let new_layer = match key.key_state() {
@@ -3563,7 +3159,7 @@ index 8f49d42..7c682e9 100644
                          };
                          if active_layer != new_layer {
                              active_layer = new_layer;
-@@ -2804,9 +4100,57 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -2804,9 +3995,57 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                      if Some(te.device()) != digitizer || backlight.current_bl() == 0 {
                          continue;
                      }
@@ -3621,7 +3217,7 @@ index 8f49d42..7c682e9 100644
                              let y = dn.y_transformed(height as u32);
                              if touch_log {
                                  println!("touch: down slot={} x={x:.1} y={y:.1}", dn.seat_slot());
-@@ -2821,7 +4165,7 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -2821,7 +4060,7 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                              // pixels of done, and hijacking touches there
                              // turned every scroll started right after a layer
                              // switch into a phantom swipe.
@@ -3630,7 +3226,7 @@ index 8f49d42..7c682e9 100644
                                  let target = layer_slide_target.unwrap_or(0.0);
                                  let swiping = touches
                                      .values()
-@@ -2875,16 +4219,22 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -2875,16 +4114,22 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                  // means the layer the user can already see.
                                  // Finish the slide on the spot (a sub-slop
                                  // jump) and let the touch land normally.
@@ -3659,7 +3255,7 @@ index 8f49d42..7c682e9 100644
                              }
                              let layer = &mut layers[active_layer];
                              // Touching the band catches it: any fling stops, and
-@@ -2937,6 +4287,7 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -2937,6 +4182,7 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                              TouchState::SliderDrag {
                                                  layer: active_layer,
                                                  btn,
@@ -3667,7 +3263,7 @@ index 8f49d42..7c682e9 100644
                                              },
                                          );
                                      } else {
-@@ -3012,7 +4363,9 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -3012,7 +4258,9 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                  // a scroll drag; with layer swipe on, a miss
                                  // anywhere can start a swipe.
                                  None => {
@@ -3678,7 +3274,7 @@ index 8f49d42..7c682e9 100644
                                          touches.insert(
                                              dn.seat_slot(),
                                              TouchState::Pending {
-@@ -3067,7 +4420,56 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -3067,7 +4315,56 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                              }
                              match *state {
                                  TouchState::Held { layer, btn } => {
@@ -3736,7 +3332,7 @@ index 8f49d42..7c682e9 100644
                                          let hit = layers[layer]
                                              .hit(&cfg.style, width, height, x, y, Some(btn))
                                              .is_some();
-@@ -3088,6 +4490,7 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -3088,6 +4385,7 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                      let became_swipe = crossed
                                          && cfg.layer_swipe
                                          && layers.len() > 1
@@ -3744,7 +3340,7 @@ index 8f49d42..7c682e9 100644
                                          && multi
                                          && !has_swipe
                                          && !has_scroll;
-@@ -3104,38 +4507,108 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -3104,38 +4402,91 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                              }
                                          }
                                      }
@@ -3829,25 +3425,8 @@ index 8f49d42..7c682e9 100644
                                          }
 -                                    };
 +                                    } else {
-+                                        let dock_btn = (crossed && !multi)
-+                                            .then_some(btn)
-+                                            .flatten()
-+                                            .filter(|&b| {
-+                                                matches!(
-+                                                    layers[layer].buttons.get(b).map(|x| &x.1.image),
-+                                                    Some(ButtonImage::Dock(_))
-+                                                )
-+                                            });
 +                                        *state = if became_swipe {
 +                                            TouchState::LayerSwipe {
-+                                                last_x: x,
-+                                                last_t_us: mtn.time_usec(),
-+                                                velocity: 0.0,
-+                                            }
-+                                        } else if let Some(b) = dock_btn {
-+                                            TouchState::DockDrag {
-+                                                layer,
-+                                                btn: b,
 +                                                last_x: x,
 +                                                last_t_us: mtn.time_usec(),
 +                                                velocity: 0.0,
@@ -3882,7 +3461,7 @@ index 8f49d42..7c682e9 100644
                                  }
                                  TouchState::Scroll {
                                      layer,
-@@ -3189,36 +4662,48 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -3189,36 +4540,48 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                      last_t_us,
                                      velocity,
                                  } => {
@@ -3957,50 +3536,7 @@ index 8f49d42..7c682e9 100644
                                      {
                                          if let Some((id, mute_arg)) = l.apply_slider_value(btn, v) {
                                              if let Some(arg) = mute_arg {
-@@ -3228,9 +4713,50 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
-                                         }
-                                     }
-                                 }
-+                                TouchState::DockDrag {
-+                                    layer,
-+                                    btn,
-+                                    last_x,
-+                                    last_t_us,
-+                                    velocity,
-+                                } => {
-+                                    let icon_w = layers[layer].buttons[btn].1.icon_width;
-+                                    if let Some((_, button_width)) =
-+                                        layers[layer].button_screen_rect(btn, width as f64, &cfg.style)
-+                                    {
-+                                        let t_us = mtn.time_usec();
-+                                        let dx = x - last_x;
-+                                        let dt = t_us.saturating_sub(last_t_us) as f64 / 1e6;
-+                                        if let ButtonImage::Dock(dock) =
-+                                            &mut layers[layer].buttons[btn].1.image
-+                                        {
-+                                            let max = dock.max_scroll(button_width, icon_w);
-+                                            dock.scroll_offset =
-+                                                (dock.scroll_offset - dx).clamp(0.0, max);
-+                                        }
-+                                        let velocity = if dt > 0.0 {
-+                                            (0.6 * (dx / dt) + 0.4 * velocity)
-+                                                .clamp(-FLING_MAX_VELOCITY, FLING_MAX_VELOCITY)
-+                                        } else {
-+                                            velocity
-+                                        };
-+                                        *state = TouchState::DockDrag {
-+                                            layer,
-+                                            btn,
-+                                            last_x: x,
-+                                            last_t_us: t_us,
-+                                            velocity,
-+                                        };
-+                                        if dx != 0.0 && layer == active_layer {
-+                                            layers[layer].buttons[btn].1.changed = true;
-+                                            needs_complete_redraw = true;
-+                                        }
-+                                    }
-+                                }
+@@ -3231,6 +4594,7 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                              }
                          }
                          TouchEvent::Up(up) => {
@@ -4008,40 +3544,7 @@ index 8f49d42..7c682e9 100644
                              let Some(state) = touches.remove(&up.seat_slot()) else {
                                  continue;
                              };
-@@ -3330,6 +4856,32 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
-                                             {
-                                                 e.last_interaction = Instant::now();
-                                             }
-+                                        } else if matches!(
-+                                            layers[layer].buttons[btn].1.image,
-+                                            ButtonImage::Dock(_)
-+                                        ) {
-+                                            // Tap launches the app under the
-+                                            // finger. A Dock button sends no
-+                                            // key of its own; focusing an
-+                                            // already-running app needs a WM
-+                                            // backend (not wired yet).
-+                                            let icon_w = layers[layer].buttons[btn].1.icon_width;
-+                                            let launch = layers[layer]
-+                                                .button_screen_rect(btn, width as f64, &cfg.style)
-+                                                .and_then(|(left, _)| {
-+                                                    let ButtonImage::Dock(dock) =
-+                                                        &layers[layer].buttons[btn].1.image
-+                                                    else {
-+                                                        return None;
-+                                                    };
-+                                                    let i = dock.index_at(start_x - left, icon_w)?;
-+                                                    (!dock.apps[i].running)
-+                                                        .then(|| dock.apps[i].launch.clone())
-+                                                });
-+                                            if let Some(cmd) = launch {
-+                                                media::run_tap_command(&cmd);
-+                                            }
-+                                            layers[layer].buttons[btn].1.set_visual_active(false);
-                                         } else {
-                                             let button = &mut layers[layer].buttons[btn].1;
-                                             // Run OnClick shell command if present
-@@ -3346,8 +4898,20 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+@@ -3346,8 +4710,20 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                  TouchState::Pending { .. } => {}
                                  // Lifting off a slider restarts its idle
                                  // countdown from now.
@@ -4063,34 +3566,23 @@ index 8f49d42..7c682e9 100644
                                  }
                                  TouchState::Scroll {
                                      layer,
-@@ -3411,11 +4975,10 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
-                                         fling_tick = Instant::now();
-                                     }
-                                 }
--                                TouchState::LayerSwipe {
--                                    last_t_us,
--                                    velocity,
--                                    ..
--                                } => {
-+                                TouchState::DockDrag { layer, btn, last_t_us, velocity, .. } => {
-+                                    // Same stale-rest check as the layer band:
-+                                    // a finger that stopped before lifting was
-+                                    // placing the row, not flicking it.
-                                     let velocity = if up.time_usec().saturating_sub(last_t_us)
-                                         > FLING_STALE_US
-                                     {
-@@ -3423,33 +4986,59 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
-                                     } else {
-                                         velocity
-                                     };
+@@ -3416,39 +4792,44 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
+                                     velocity,
+                                     ..
+                                 } => {
+-                                    let velocity = if up.time_usec().saturating_sub(last_t_us)
+-                                        > FLING_STALE_US
+-                                    {
+-                                        0.0
+-                                    } else {
+-                                        velocity
+-                                    };
 -                                    // A flick commits the swap in its direction;
 -                                    // otherwise the slide settles to whichever
 -                                    // layer is showing more. The travel depends
 -                                    // on which transition the direction picks.
 -                                    let dir_positive = if velocity.abs() >= LAYER_SWIPE_MIN_VELOCITY
-+                                    if let ButtonImage::Dock(dock) =
-+                                        &mut layers[layer].buttons[btn].1.image
-                                     {
+-                                    {
 -                                        velocity > 0.0
 -                                    } else {
 -                                        layer_shift > 0.0
@@ -4108,24 +3600,13 @@ index 8f49d42..7c682e9 100644
 -                                        } else if layer_shift.abs() > t / 2.0 {
 -                                            t.copysign(layer_shift)
 -                                        } else {
--                                            0.0
--                                        });
-+                                        dock.velocity =
-+                                            if velocity.abs() >= FLING_MIN_VELOCITY { velocity } else { 0.0 };
-+                                    }
-+                                    layers[layer].buttons[btn].1.changed = true;
-                                     fling_tick = Instant::now();
-                                 }
-+                                TouchState::LayerSwipe {
-+                                    last_t_us,
-+                                    velocity,
-+                                    ..
-+                                } => {
 +                                    if active_layer <= 1 {
 +                                        let velocity = if up.time_usec().saturating_sub(last_t_us)
 +                                            > FLING_STALE_US
 +                                        {
-+                                            0.0
+                                             0.0
+-                                        });
+-                                    fling_tick = Instant::now();
 +                                        } else {
 +                                            velocity
 +                                        };
@@ -4159,11 +3640,10 @@ index 8f49d42..7c682e9 100644
 +                                        layer_shift = 0.0;
 +                                        layer_slide_target = None;
 +                                    }
-+                                }
+                                 }
                              }
                          }
-                         _ => {}
-@@ -3566,14 +5155,66 @@ mod tests {
+@@ -3566,14 +4947,66 @@ mod tests {
          )
      }
  
@@ -4204,7 +3684,8 @@ index 8f49d42..7c682e9 100644
 +        assert_eq!(l.order, vec![1, 2, 0, 3]);
 +    }
 +
-+    #[test]
+     #[test]
+-    fn ease_expand_overshoots_then_settles() {
 +    fn rearrange_end_restores_configured_order() {
 +        let style = Style::default();
 +        let bar = W as f64;
@@ -4223,8 +3704,7 @@ index 8f49d42..7c682e9 100644
 +        assert_eq!(l.index_at_x(1.0, bar, &style), Some(0));
 +    }
 +
-     #[test]
--    fn ease_expand_overshoots_then_settles() {
++    #[test]
 +    fn ease_expand_starts_at_zero_and_reaches_one() {
          assert!(ease_expand(0.0).abs() < 1e-9);
 -        assert!((ease_expand(1.0) - 1.0).abs() < 1e-9);
@@ -4236,7 +3716,7 @@ index 8f49d42..7c682e9 100644
      }
  
      #[test]
-@@ -3978,6 +5619,48 @@ mod tests {
+@@ -3978,6 +5411,48 @@ mod tests {
          assert_eq!(layer.hit(&style, W, H, x, y, Some(2)), None);
      }
  
@@ -4614,22 +4094,10 @@ index 32584e1..7a57367 100644
  /// zone_width)`. Active (now-playing) clusters the three controls on the right
  /// so the album text has the left; idle spreads them across the full width.
 diff --git a/src/sensors.rs b/src/sensors.rs
-index 7daece1..7d9646c 100644
+index 7daece1..2c77d03 100644
 --- a/src/sensors.rs
 +++ b/src/sensors.rs
-@@ -6,9 +6,10 @@
- //! statics below, which the render path reads without blocking.
- 
- use std::{
-+    collections::HashMap,
-     fs::{self, File},
-     path::{Path, PathBuf},
--    sync::Mutex,
-+    sync::{LazyLock, Mutex},
- };
- 
- #[derive(Clone, Copy, PartialEq, Eq)]
-@@ -33,15 +34,82 @@ pub(crate) static CPU_TEMP_STATE: Mutex<Option<i32>> = Mutex::new(None);
+@@ -33,11 +33,18 @@ pub(crate) static CPU_TEMP_STATE: Mutex<Option<i32>> = Mutex::new(None);
  /// counter by a poller thread. `None` means no readable RAPL counter.
  pub(crate) static CPU_POWER_STATE: Mutex<Option<i32>> = Mutex::new(None);
  
@@ -4648,71 +4116,7 @@ index 7daece1..7d9646c 100644
  /// The detected GPU's vendor label ("AMD"/"NVIDIA"/"Intel"), or a bare "GPU"
  /// until detection resolves it. Shown as the widget's label prefix.
  pub(crate) static GPU_LABEL: Mutex<&'static str> = Mutex::new("GPU");
- 
-+/// Latest `(running, crashed)` per Dock `Match` pattern (a process name),
-+/// rebuilt wholesale by a poller thread from `/proc` every couple of seconds.
-+/// A name not present in the map is simply not running. Shared across every
-+/// Dock app that uses the same pattern; keyed by name, not by widget, so this
-+/// has no dependency on any compositor or window manager -- it only looks at
-+/// processes.
-+pub(crate) static DOCK_PROC_STATE: LazyLock<Mutex<HashMap<String, (bool, bool)>>> =
-+    LazyLock::new(|| Mutex::new(HashMap::new()));
-+/// Bumped whenever the poller actually changes `DOCK_PROC_STATE`, so the
-+/// render loop can notice with a cheap integer compare instead of diffing the
-+/// whole map every frame.
-+pub(crate) static DOCK_PROC_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-+
-+/// Scan `/proc` for every process's name (basename of `cmdline`'s argv[0],
-+/// falling back to `stat`'s recorded comm for processes with no cmdline left,
-+/// e.g. zombies) and whether it's a zombie. Running is true if *any* matching
-+/// pid is live; crashed is true if *any* matching pid is a zombie -- a crashed
-+/// GUI process commonly leaves a zombie behind even if a helper process of the
-+/// same name is still (harmlessly) around.
-+pub(crate) fn scan_dock_processes() -> HashMap<String, (bool, bool)> {
-+    let mut map: HashMap<String, (bool, bool)> = HashMap::new();
-+    let Ok(entries) = fs::read_dir("/proc") else {
-+        return map;
-+    };
-+    for entry in entries.flatten() {
-+        let pid_str = entry.file_name();
-+        let Some(pid_str) = pid_str.to_str() else {
-+            continue;
-+        };
-+        if pid_str.is_empty() || !pid_str.bytes().all(|b| b.is_ascii_digit()) {
-+            continue; // not a /proc/<pid> entry
-+        }
-+        let path = entry.path();
-+        let stat = fs::read_to_string(path.join("stat")).unwrap_or_default();
-+        // The 2nd field is "(name)" and can itself contain spaces/parens, so
-+        // split on the *last* ')' before reading the state letter after it.
-+        let (stat_name, state) = match stat.rsplit_once(')') {
-+            Some((head, tail)) => (
-+                head.split_once('(').map(|(_, n)| n).unwrap_or(""),
-+                tail.split_whitespace().next().unwrap_or(""),
-+            ),
-+            None => ("", ""),
-+        };
-+        let cmdline = fs::read_to_string(path.join("cmdline")).unwrap_or_default();
-+        let argv0 = cmdline.split('\0').next().unwrap_or("");
-+        let name = if !argv0.is_empty() {
-+            argv0.rsplit('/').next().unwrap_or(argv0)
-+        } else {
-+            stat_name
-+        };
-+        if name.is_empty() {
-+            continue;
-+        }
-+        let slot = map.entry(name.to_string()).or_insert((false, false));
-+        slot.0 = true;
-+        slot.1 |= state == "Z";
-+    }
-+    map
-+}
-+
- pub(crate) fn find_battery_device() -> Option<String> {
-     let power_supply_path = "/sys/class/power_supply";
-     if let Ok(entries) = fs::read_dir(power_supply_path) {
-@@ -60,6 +128,20 @@ pub(crate) fn find_battery_device() -> Option<String> {
+@@ -60,6 +67,20 @@ pub(crate) fn find_battery_device() -> Option<String> {
      None
  }
  
@@ -4733,7 +4137,7 @@ index 7daece1..7d9646c 100644
  pub(crate) fn get_battery_state(battery: &str) -> (u32, BatteryState) {
      let status_path = format!("/sys/class/power_supply/{}/status", battery);
      let status = fs::read_to_string(&status_path).unwrap_or_else(|_| "Unknown".to_string());
-@@ -96,10 +178,18 @@ pub(crate) fn get_battery_state(battery: &str) -> (u32, BatteryState) {
+@@ -96,10 +117,18 @@ pub(crate) fn get_battery_state(battery: &str) -> (u32, BatteryState) {
          }
      };
  
@@ -4756,7 +4160,7 @@ index 7daece1..7d9646c 100644
      };
      (capacity, status)
  }
-@@ -147,6 +237,25 @@ pub(crate) fn find_cpu_temp_zone() -> Option<PathBuf> {
+@@ -147,6 +176,25 @@ pub(crate) fn find_cpu_temp_zone() -> Option<PathBuf> {
      None
  }
  

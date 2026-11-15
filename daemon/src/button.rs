@@ -3,8 +3,8 @@
 //! tap-to-expand state, and image loading. `FunctionLayer` (in main) lays these
 //! out and drives their draw; the media panel itself lives in `render`.
 
-use crate::config::{ButtonAction, ButtonConfig, DockAppConfig};
-use crate::render::{capsule, rounded_rect_path, show_layout_centered, text_layout, MediaState};
+use crate::config::{ButtonAction, ButtonConfig};
+use crate::render::{capsule, show_layout_centered, text_layout, MediaState};
 use crate::sensors::{
     find_battery_device, BatteryState, BATTERY_STATE, CPU_POWER_STATE, CPU_TEMP_STATE,
     CPU_USAGE_STATE, GPU_LABEL, GPU_POWER_STATE, GPU_TEMP_STATE, GPU_USAGE_STATE,
@@ -59,58 +59,6 @@ pub(crate) struct GpuDisplay {
     usage: bool,
     label: bool,
 }
-
-/// One pinned app inside a `Dock` widget; running/crashed are updated by a
-/// poller that scans `/proc` for `match_pattern` (process name), so this has
-/// no dependency on any particular compositor or window manager.
-pub(crate) struct DockApp {
-    pub(crate) name: String,
-    pub(crate) launch: String,
-    pub(crate) match_pattern: String,
-    icon: Option<CachedSvg>,
-    pub(crate) running: bool,
-    pub(crate) crashed: bool,
-}
-
-/// A `Dock` widget: a user-curated row of app launcher icons, embedded in
-/// whatever slot it's given and scrolling internally (drag on it) when the
-/// apps don't all fit -- a self-contained scroll, independent of the layer's
-/// own band scroll used elsewhere (e.g. for VisibleButtons layers).
-pub(crate) struct DockState {
-    pub(crate) apps: Vec<DockApp>,
-    /// How far the content has scrolled right, in px (0 = start, clamped to
-    /// the content's overflow past the button's own width).
-    pub(crate) scroll_offset: f64,
-    /// Fling momentum in px/s after a drag release; 0 when not coasting.
-    pub(crate) velocity: f64,
-}
-
-impl DockState {
-    /// Pixel pitch (tile width + gap) between consecutive app icons.
-    pub(crate) fn pitch(icon_size: f64) -> f64 {
-        icon_size + DOCK_TILE_GAP
-    }
-
-    /// How far `scroll_offset` can go before the last icon's right edge
-    /// reaches the button's own right edge (0 if everything already fits).
-    pub(crate) fn max_scroll(&self, button_width: f64, icon_size: f64) -> f64 {
-        let content = self.apps.len() as f64 * Self::pitch(icon_size);
-        (content - button_width).max(0.0)
-    }
-
-    /// The app index under bar position `x` (button-relative, i.e. already
-    /// minus the button's own left edge), or `None` in a gap/past the end.
-    pub(crate) fn index_at(&self, rel_x: f64, icon_size: f64) -> Option<usize> {
-        if rel_x < 0.0 {
-            return None;
-        }
-        let i = ((rel_x + self.scroll_offset) / Self::pitch(icon_size)) as usize;
-        (i < self.apps.len()).then_some(i)
-    }
-}
-
-/// Gap in px between consecutive Dock app icons.
-const DOCK_TILE_GAP: f64 = 14.0;
 
 /// An SVG icon together with a cache of its rasterization. librsvg's
 /// `render_document` re-parses and re-rasterizes the SVG on every call, which is
@@ -324,7 +272,6 @@ pub(crate) enum ButtonImage {
     Gpu(GpuDisplay),
     Slider(SliderState),
     Media(MediaState),
-    Dock(DockState),
     /// A command widget: `text`/`color`/`icon` are updated from its script's
     /// output. `icon_name` is the last icon the script asked for; `icon` is the
     /// SVG resolved from it (via `theme`), reloaded only when the name changes.
@@ -570,14 +517,6 @@ impl Button {
             Button::new_cpu(cfg.action, &spec, cfg.cpu_label.unwrap_or(true))
         } else if let Some(spec) = cfg.gpu {
             Button::new_gpu(cfg.action, &spec, cfg.gpu_label.unwrap_or(true))
-        } else if cfg.dock == Some(true) {
-            Button::new_dock(
-                cfg.action,
-                cfg.dock_apps.unwrap_or_default(),
-                cfg.theme.as_deref(),
-                cfg.icon_width.unwrap_or(default_icon_size),
-                cfg.icon_height.unwrap_or(default_icon_size),
-            )
         } else {
             Button::new_spacer()
         };
@@ -852,57 +791,6 @@ impl Button {
             image: ButtonImage::Cpu(CpuDisplay { temp, watts, usage, label }),
             icon_width: 0.0,
             icon_height: 0.0,
-            bg_color: None,
-            bg_color_active: None,
-            text_color: None,
-            highlight_on_tap: false,
-            tap_command: None,
-        }
-    }
-
-    pub(crate) fn new_dock(
-        action: Vec<ButtonAction>,
-        apps: Vec<DockAppConfig>,
-        theme: Option<&str>,
-        icon_width: i32,
-        icon_height: i32,
-    ) -> Button {
-        let apps = apps
-            .into_iter()
-            .filter_map(|a| {
-                let launch = a.launch?;
-                let match_pattern = a.match_pattern.clone().unwrap_or_else(|| launch.clone());
-                let icon = a.icon.as_deref().and_then(|name| {
-                    match try_load_image(name, theme, icon_width, icon_height) {
-                        Ok(ButtonImage::Svg(svg)) => Some(svg),
-                        Ok(ButtonImage::Bitmap(_)) => None, // dock tiles only cache SVGs today
-                        _ => {
-                            eprintln!(
-                                "big-dfr: Dock app {:?}: icon {name:?} not found",
-                                a.name.as_deref().unwrap_or(&launch)
-                            );
-                            None
-                        }
-                    }
-                });
-                Some(DockApp {
-                    name: a.name.unwrap_or_else(|| launch.clone()),
-                    launch,
-                    match_pattern,
-                    icon,
-                    running: false,
-                    crashed: false,
-                })
-            })
-            .collect();
-        Button {
-        caption: None,
-            action,
-            active: false,
-            changed: true,
-            image: ButtonImage::Dock(DockState { apps, scroll_offset: 0.0, velocity: 0.0 }),
-            icon_width: icon_width as f64,
-            icon_height: icon_height as f64,
             bg_color: None,
             bg_color_active: None,
             text_color: None,
@@ -1243,49 +1131,6 @@ impl Button {
             // The media widget is painted in full by paint_media (it needs the
             // rounded-rect geometry), so it never reaches this content pass.
             ButtonImage::Media(_) => (),
-            ButtonImage::Dock(dock) => {
-                let pitch = DockState::pitch(self.icon_width);
-                c.save().unwrap();
-                c.rectangle(button_left_edge, 0.0, button_width as f64, height as f64);
-                c.clip();
-                let y = y_shift + ((height as f64 - self.icon_height) / 2.0).round();
-                let first = (dock.scroll_offset / pitch).floor().max(0.0) as usize;
-                for (i, app) in dock.apps.iter().enumerate().skip(first) {
-                    let x = button_left_edge + i as f64 * pitch - dock.scroll_offset;
-                    if x > button_left_edge + button_width as f64 {
-                        break; // tiles are drawn left to right; the rest are off the right edge
-                    }
-                    if x + self.icon_width < button_left_edge {
-                        continue; // scrolled fully past, off the left edge
-                    }
-                    match &app.icon {
-                        Some(svg) => svg.render(c, x, y, self.icon_width, self.icon_height),
-                        // No icon resolved for this app: a plain muted tile
-                        // instead of silently drawing nothing (or panicking).
-                        None => {
-                            c.set_source_rgba(1.0, 1.0, 1.0, 0.25);
-                            let r = (self.icon_width.min(self.icon_height) * 0.18).max(2.0);
-                            rounded_rect_path(
-                                c,
-                                x,
-                                self.icon_width,
-                                r,
-                                y,
-                                y + self.icon_height,
-                            );
-                            c.fill().unwrap();
-                        }
-                    }
-                    if app.running {
-                        let cx = x + self.icon_width / 2.0;
-                        let cy = y + self.icon_height + 5.0;
-                        c.set_source_rgba(1.0, 1.0, 1.0, if app.crashed { 0.9 } else { 0.55 });
-                        c.arc(cx, cy, 2.2, 0.0, std::f64::consts::TAU);
-                        c.fill().unwrap();
-                    }
-                }
-                c.restore().unwrap();
-            }
             ButtonImage::Spacer => (),
         }
         if let Some(caption) = &self.caption {
@@ -1472,53 +1317,4 @@ mod tests {
         assert_eq!(gpu_text(&d), "n/a");
     }
 
-    fn dock_app(name: &str) -> DockApp {
-        DockApp {
-            name: name.to_string(),
-            launch: name.to_string(),
-            match_pattern: name.to_string(),
-            icon: None,
-            running: false,
-            crashed: false,
-        }
-    }
-
-    #[test]
-    fn dock_pitch_is_icon_plus_gap() {
-        assert_eq!(DockState::pitch(40.0), 40.0 + DOCK_TILE_GAP);
-    }
-
-    #[test]
-    fn dock_max_scroll_is_zero_when_everything_fits() {
-        let dock = DockState { apps: vec![dock_app("a"), dock_app("b")], scroll_offset: 0.0, velocity: 0.0 };
-        assert_eq!(dock.max_scroll(1000.0, 40.0), 0.0);
-    }
-
-    #[test]
-    fn dock_max_scroll_is_overflow_past_button_width() {
-        let dock = DockState {
-            apps: vec![dock_app("a"), dock_app("b"), dock_app("c")],
-            scroll_offset: 0.0,
-            velocity: 0.0,
-        };
-        let pitch = DockState::pitch(40.0);
-        assert_eq!(dock.max_scroll(pitch, 40.0), 2.0 * pitch);
-    }
-
-    #[test]
-    fn dock_index_at_resolves_scrolled_tiles() {
-        let dock = DockState {
-            apps: vec![dock_app("a"), dock_app("b"), dock_app("c")],
-            scroll_offset: DockState::pitch(40.0),
-            velocity: 0.0,
-        };
-        assert_eq!(dock.index_at(0.0, 40.0), Some(1));
-        assert_eq!(dock.index_at(-5.0, 40.0), None);
-    }
-
-    #[test]
-    fn dock_index_at_none_past_the_last_app() {
-        let dock = DockState { apps: vec![dock_app("a")], scroll_offset: 0.0, velocity: 0.0 };
-        assert_eq!(dock.index_at(1000.0, 40.0), None);
-    }
 }

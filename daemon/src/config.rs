@@ -326,22 +326,6 @@ pub struct LayerStyle {
     pub timeout: Option<f64>,
 }
 
-/// One pinned app inside a `Dock` widget (`DockApps = [{...}, ...]`).
-/// `Match` is a process name (as seen in `/proc/<pid>/comm`) used to tell
-/// whether the app is running -- generic, so the dock core does not depend on
-/// any particular window manager or compositor.
-#[derive(Deserialize, Default, Clone, Debug)]
-#[serde(rename_all = "PascalCase")]
-pub struct DockAppConfig {
-    /// Shown only as a tooltip/identifier; the bar itself just shows the icon.
-    pub name: Option<String>,
-    pub icon: Option<String>,
-    /// Shell command that starts the app (passed to `sh -c`).
-    pub launch: Option<String>,
-    #[serde(rename = "Match")]
-    pub match_pattern: Option<String>,
-}
-
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "PascalCase")]
 pub struct ButtonConfig {
@@ -428,13 +412,6 @@ pub struct ButtonConfig {
     // cover with the track title and artist. Driven by playerctl (MPRIS); taps
     // control the active player. Spans `stretch` slots.
     pub media: Option<bool>,
-    // A Dock widget: launcher icons for a user-curated list of apps, embedded
-    // directly in whatever layer/slot it's placed, scrolling internally (drag
-    // left/right on it) when the apps don't all fit in its Stretch width.
-    // Tapping a non-running app's icon launches it; `IconWidth`/`IconHeight`
-    // (or the global IconSize) set each app tile's icon size.
-    pub dock: Option<bool>,
-    pub dock_apps: Option<Vec<DockAppConfig>>,
 }
 
 /// The stock Esc + F1-F12 primary layer, used when the config sets no
@@ -539,8 +516,6 @@ fn esc_button() -> ButtonConfig {
         expand_command: None,
         expand_stretch: None,
         media: None,
-        dock: None,
-        dock_apps: None,
     }
 }
 
@@ -596,8 +571,6 @@ fn error_layer(message: &str) -> FunctionLayer {
             expand_command: None,
             expand_stretch: None,
             media: None,
-            dock: None,
-            dock_apps: None,
         },
     ];
     FunctionLayer::with_config(

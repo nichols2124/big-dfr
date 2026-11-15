@@ -53,8 +53,8 @@ use render::*;
 use uinput::{create_uinput, toggle_keys, Interface};
 use sensors::{
     find_battery_device, find_cpu_temp_zone, get_battery_state, open_cpu_power_source,
-    read_cpu_jiffies, read_cpu_temp, read_energy_uj, scan_dock_processes, BATTERY_STATE,
-    CPU_POWER_STATE, CPU_TEMP_STATE, CPU_USAGE_STATE, DOCK_PROC_GEN, DOCK_PROC_STATE, GPU_LABEL,
+    read_cpu_jiffies, read_cpu_temp, read_energy_uj, BATTERY_STATE,
+    CPU_POWER_STATE, CPU_TEMP_STATE, CPU_USAGE_STATE, GPU_LABEL,
     GPU_POWER_STATE, GPU_TEMP_STATE, GPU_USAGE_STATE,
 };
 
@@ -257,16 +257,6 @@ enum TouchState {
         /// instead of jumping to the finger's absolute position.
         rel: Option<(f64, i32)>,
     },
-    /// Dragging a Dock widget's own app-icon row: the finger owns the
-    /// button's internal scroll (not the layer's band), exactly like
-    /// SliderDrag owns a slider rather than the layer.
-    DockDrag {
-        layer: usize,
-        btn: usize,
-        last_x: f64,
-        last_t_us: u64,
-        velocity: f64,
-    },
 }
 
 impl TouchState {
@@ -278,7 +268,6 @@ impl TouchState {
             TouchState::Scroll { .. } => "scroll",
             TouchState::LayerSwipe { .. } => "swipe",
             TouchState::SliderDrag { .. } => "slider",
-            TouchState::DockDrag { .. } => "dock",
         }
     }
 }
@@ -566,7 +555,6 @@ pub struct FunctionLayer {
     displays_battery: bool,
     displays_cpu: bool,
     displays_gpu: bool,
-    displays_dock: bool,
     displays_media: bool,
     buttons: Vec<(usize, Button)>,
     virtual_button_count: usize,
@@ -768,8 +756,7 @@ fn rotate_touch_layers<K>(touches: &mut HashMap<K, TouchState>, n: usize, left: 
             TouchState::Held { layer, .. }
             | TouchState::Pending { layer, .. }
             | TouchState::Scroll { layer, .. }
-            | TouchState::SliderDrag { layer, .. }
-            | TouchState::DockDrag { layer, .. } => {
+            | TouchState::SliderDrag { layer, .. } => {
                 *layer = if left {
                     (*layer + n - 1) % n
                 } else {
@@ -1513,7 +1500,6 @@ impl FunctionLayer {
         let displays_battery = cfg.iter().any(|cfg| cfg.battery.is_some());
         let displays_cpu = cfg.iter().any(|cfg| cfg.cpu.is_some());
         let displays_gpu = cfg.iter().any(|cfg| cfg.gpu.is_some());
-        let displays_dock = cfg.iter().any(|cfg| cfg.dock == Some(true));
         let displays_media = cfg.iter().any(|cfg| cfg.media == Some(true));
         let base_stretch: Vec<usize> = cfg.iter().map(|c| c.stretch.unwrap_or(1).max(1)).collect();
         let extras: Vec<ButtonExtras> = cfg
@@ -1693,7 +1679,6 @@ impl FunctionLayer {
             displays_battery,
             displays_cpu,
             displays_gpu,
-            displays_dock,
             displays_media,
             buttons,
             virtual_button_count,
@@ -2607,8 +2592,6 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
     let mut last_gpu_temp_drawn = *GPU_TEMP_STATE.lock().unwrap();
     let mut last_gpu_power_drawn = *GPU_POWER_STATE.lock().unwrap();
     let mut last_gpu_usage_drawn = *GPU_USAGE_STATE.lock().unwrap();
-    // Same, for Dock buttons' running/crashed indicators.
-    let mut last_dock_proc_gen = DOCK_PROC_GEN.load(std::sync::atomic::Ordering::Relaxed);
     // The media generation currently on screen; the Media widget redraws when
     // the poller publishes a new status / track / album art.
     let mut last_media_gen = MEDIA_STATE.lock().unwrap().generation;
@@ -2798,31 +2781,6 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                 }
             }
             thread::sleep(CPU_TEMP_POLL);
-        });
-    }
-    // Dock app running/crashed poller: a full /proc rescan every couple of
-    // seconds (see scan_dock_processes). Generic -- no compositor or window
-    // manager involved, just process names -- so Dock apps show their running
-    // state regardless of what's managing the windows.
-    {
-        *DOCK_PROC_STATE.lock().unwrap() = scan_dock_processes();
-        let wake = wake_write.clone();
-        thread::spawn(move || loop {
-            thread::sleep(CPU_TEMP_POLL);
-            let reading = scan_dock_processes();
-            let changed = {
-                let mut shared = DOCK_PROC_STATE.lock().unwrap();
-                let changed = *shared != reading;
-                *shared = reading;
-                changed
-            };
-            if changed {
-                DOCK_PROC_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let byte = [1u8];
-                unsafe {
-                    libc::write(wake.as_raw_fd(), byte.as_ptr() as *const libc::c_void, 1);
-                }
-            }
         });
     }
     // Now-playing media polling (playerctl / MPRIS): same wake-pipe pattern as
@@ -3091,12 +3049,10 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
             }
             // A slider has no key to hold down: keep it Pending so a finger held
             // still still resolves to expand-on-tap (see the Up handler) rather
-            // than a dead Held state that swallows the tap. A Dock button is
-            // the same -- it sends no key either, and a long hold is reserved
-            // for its own future context-menu gesture.
+            // than a dead Held state that swallows the tap.
             if matches!(
                 layers.get(layer).and_then(|l| l.buttons.get(btn)),
-                Some((_, b)) if matches!(b.image, ButtonImage::Slider(_) | ButtonImage::Dock(_))
+                Some((_, b)) if matches!(b.image, ButtonImage::Slider(_))
             ) {
                 continue;
             }
@@ -3375,8 +3331,7 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                     TouchState::Held { layer, .. }
                     | TouchState::Pending { layer, .. }
                     | TouchState::Scroll { layer, .. }
-                    | TouchState::SliderDrag { layer, .. }
-                    | TouchState::DockDrag { layer, .. } => layer == i,
+                    | TouchState::SliderDrag { layer, .. } => layer == i,
                     // A layer swipe holds the slide, not any band stretch.
                     TouchState::LayerSwipe { .. } => false,
                 });
@@ -3482,44 +3437,6 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                 needs_complete_redraw = true;
             }
         }
-        // A Dock widget's own internal scroll coasts independently of the
-        // layer's band scroll above (it's a self-contained strip -- Stage 1
-        // keeps it simple: plain exponential decay, hard-clamped at either
-        // end with no rubber-band or slot snap).
-        for (i, layer) in layers.iter_mut().enumerate() {
-            for btn in 0..layer.buttons.len() {
-                let coasting = matches!(
-                    &layer.buttons[btn].1.image,
-                    ButtonImage::Dock(dock) if dock.velocity != 0.0
-                );
-                if !coasting {
-                    continue;
-                }
-                let Some((_, button_width)) = layer.button_screen_rect(btn, width as f64, &cfg.style) else {
-                    continue;
-                };
-                let icon_width = layer.buttons[btn].1.icon_width;
-                let ButtonImage::Dock(dock) = &mut layer.buttons[btn].1.image else {
-                    unreachable!()
-                };
-                let max = dock.max_scroll(button_width, icon_width);
-                dock.scroll_offset = (dock.scroll_offset - dock.velocity * anim_dt).clamp(0.0, max);
-                if dock.scroll_offset <= 0.0 || dock.scroll_offset >= max {
-                    dock.velocity = 0.0; // hit an end: stop dead, no bounce
-                } else {
-                    dock.velocity *= (-anim_dt / FLING_FRICTION_TAU).exp();
-                    if dock.velocity.abs() < FLING_STOP_VELOCITY {
-                        dock.velocity = 0.0;
-                    }
-                }
-                layer.buttons[btn].1.changed = true;
-                scroll_animating = true;
-                if i == active_layer {
-                    needs_complete_redraw = true;
-                }
-            }
-        }
-
         let now = Local::now();
         let ms_left = ((60 - now.second()) * 1000) as i32;
         let mut next_timeout_ms = min(ms_left, TIMEOUT_MS);
@@ -3606,28 +3523,6 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                 for button in &mut layers[active_layer].buttons {
                     if let ButtonImage::Gpu(_) = button.1.image {
                         button.1.changed = true;
-                    }
-                }
-            }
-        }
-        if layers[active_layer].displays_dock {
-            let gen = DOCK_PROC_GEN.load(std::sync::atomic::Ordering::Relaxed);
-            if gen != last_dock_proc_gen {
-                last_dock_proc_gen = gen;
-                let proc_state = DOCK_PROC_STATE.lock().unwrap().clone();
-                for button in &mut layers[active_layer].buttons {
-                    if let ButtonImage::Dock(dock) = &mut button.1.image {
-                        for app in &mut dock.apps {
-                            let (running, crashed) = proc_state
-                                .get(&app.match_pattern)
-                                .copied()
-                                .unwrap_or((false, false));
-                            if app.running != running || app.crashed != crashed {
-                                app.running = running;
-                                app.crashed = crashed;
-                                button.1.changed = true;
-                            }
-                        }
                     }
                 }
             }
@@ -4559,25 +4454,8 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                             println!("touch: press-and-drag handoff from pending to slider layer {target_layer} btn {s_idx} rel_sx={sx:.1}");
                                         }
                                     } else {
-                                        let dock_btn = (crossed && !multi)
-                                            .then_some(btn)
-                                            .flatten()
-                                            .filter(|&b| {
-                                                matches!(
-                                                    layers[layer].buttons.get(b).map(|x| &x.1.image),
-                                                    Some(ButtonImage::Dock(_))
-                                                )
-                                            });
                                         *state = if became_swipe {
                                             TouchState::LayerSwipe {
-                                                last_x: x,
-                                                last_t_us: mtn.time_usec(),
-                                                velocity: 0.0,
-                                            }
-                                        } else if let Some(b) = dock_btn {
-                                            TouchState::DockDrag {
-                                                layer,
-                                                btn: b,
                                                 last_x: x,
                                                 last_t_us: mtn.time_usec(),
                                                 velocity: 0.0,
@@ -4713,46 +4591,6 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                         }
                                     }
                                 }
-                                TouchState::DockDrag {
-                                    layer,
-                                    btn,
-                                    last_x,
-                                    last_t_us,
-                                    velocity,
-                                } => {
-                                    let icon_w = layers[layer].buttons[btn].1.icon_width;
-                                    if let Some((_, button_width)) =
-                                        layers[layer].button_screen_rect(btn, width as f64, &cfg.style)
-                                    {
-                                        let t_us = mtn.time_usec();
-                                        let dx = x - last_x;
-                                        let dt = t_us.saturating_sub(last_t_us) as f64 / 1e6;
-                                        if let ButtonImage::Dock(dock) =
-                                            &mut layers[layer].buttons[btn].1.image
-                                        {
-                                            let max = dock.max_scroll(button_width, icon_w);
-                                            dock.scroll_offset =
-                                                (dock.scroll_offset - dx).clamp(0.0, max);
-                                        }
-                                        let velocity = if dt > 0.0 {
-                                            (0.6 * (dx / dt) + 0.4 * velocity)
-                                                .clamp(-FLING_MAX_VELOCITY, FLING_MAX_VELOCITY)
-                                        } else {
-                                            velocity
-                                        };
-                                        *state = TouchState::DockDrag {
-                                            layer,
-                                            btn,
-                                            last_x: x,
-                                            last_t_us: t_us,
-                                            velocity,
-                                        };
-                                        if dx != 0.0 && layer == active_layer {
-                                            layers[layer].buttons[btn].1.changed = true;
-                                            needs_complete_redraw = true;
-                                        }
-                                    }
-                                }
                             }
                         }
                         TouchEvent::Up(up) => {
@@ -4856,32 +4694,6 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                             {
                                                 e.last_interaction = Instant::now();
                                             }
-                                        } else if matches!(
-                                            layers[layer].buttons[btn].1.image,
-                                            ButtonImage::Dock(_)
-                                        ) {
-                                            // Tap launches the app under the
-                                            // finger. A Dock button sends no
-                                            // key of its own; focusing an
-                                            // already-running app needs a WM
-                                            // backend (not wired yet).
-                                            let icon_w = layers[layer].buttons[btn].1.icon_width;
-                                            let launch = layers[layer]
-                                                .button_screen_rect(btn, width as f64, &cfg.style)
-                                                .and_then(|(left, _)| {
-                                                    let ButtonImage::Dock(dock) =
-                                                        &layers[layer].buttons[btn].1.image
-                                                    else {
-                                                        return None;
-                                                    };
-                                                    let i = dock.index_at(start_x - left, icon_w)?;
-                                                    (!dock.apps[i].running)
-                                                        .then(|| dock.apps[i].launch.clone())
-                                                });
-                                            if let Some(cmd) = launch {
-                                                media::run_tap_command(&cmd);
-                                            }
-                                            layers[layer].buttons[btn].1.set_visual_active(false);
                                         } else {
                                             let button = &mut layers[layer].buttons[btn].1;
                                             // Run OnClick shell command if present
@@ -4974,26 +4786,6 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                         }
                                         fling_tick = Instant::now();
                                     }
-                                }
-                                TouchState::DockDrag { layer, btn, last_t_us, velocity, .. } => {
-                                    // Same stale-rest check as the layer band:
-                                    // a finger that stopped before lifting was
-                                    // placing the row, not flicking it.
-                                    let velocity = if up.time_usec().saturating_sub(last_t_us)
-                                        > FLING_STALE_US
-                                    {
-                                        0.0
-                                    } else {
-                                        velocity
-                                    };
-                                    if let ButtonImage::Dock(dock) =
-                                        &mut layers[layer].buttons[btn].1.image
-                                    {
-                                        dock.velocity =
-                                            if velocity.abs() >= FLING_MIN_VELOCITY { velocity } else { 0.0 };
-                                    }
-                                    layers[layer].buttons[btn].1.changed = true;
-                                    fling_tick = Instant::now();
                                 }
                                 TouchState::LayerSwipe {
                                     last_t_us,

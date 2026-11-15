@@ -6,10 +6,9 @@
 //! statics below, which the render path reads without blocking.
 
 use std::{
-    collections::HashMap,
     fs::{self, File},
     path::{Path, PathBuf},
-    sync::{LazyLock, Mutex},
+    sync::Mutex,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -49,66 +48,6 @@ pub(crate) static GPU_USAGE_STATE: Mutex<Option<i32>> = Mutex::new(None);
 /// The detected GPU's vendor label ("AMD"/"NVIDIA"/"Intel"), or a bare "GPU"
 /// until detection resolves it. Shown as the widget's label prefix.
 pub(crate) static GPU_LABEL: Mutex<&'static str> = Mutex::new("GPU");
-
-/// Latest `(running, crashed)` per Dock `Match` pattern (a process name),
-/// rebuilt wholesale by a poller thread from `/proc` every couple of seconds.
-/// A name not present in the map is simply not running. Shared across every
-/// Dock app that uses the same pattern; keyed by name, not by widget, so this
-/// has no dependency on any compositor or window manager -- it only looks at
-/// processes.
-pub(crate) static DOCK_PROC_STATE: LazyLock<Mutex<HashMap<String, (bool, bool)>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-/// Bumped whenever the poller actually changes `DOCK_PROC_STATE`, so the
-/// render loop can notice with a cheap integer compare instead of diffing the
-/// whole map every frame.
-pub(crate) static DOCK_PROC_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// Scan `/proc` for every process's name (basename of `cmdline`'s argv[0],
-/// falling back to `stat`'s recorded comm for processes with no cmdline left,
-/// e.g. zombies) and whether it's a zombie. Running is true if *any* matching
-/// pid is live; crashed is true if *any* matching pid is a zombie -- a crashed
-/// GUI process commonly leaves a zombie behind even if a helper process of the
-/// same name is still (harmlessly) around.
-pub(crate) fn scan_dock_processes() -> HashMap<String, (bool, bool)> {
-    let mut map: HashMap<String, (bool, bool)> = HashMap::new();
-    let Ok(entries) = fs::read_dir("/proc") else {
-        return map;
-    };
-    for entry in entries.flatten() {
-        let pid_str = entry.file_name();
-        let Some(pid_str) = pid_str.to_str() else {
-            continue;
-        };
-        if pid_str.is_empty() || !pid_str.bytes().all(|b| b.is_ascii_digit()) {
-            continue; // not a /proc/<pid> entry
-        }
-        let path = entry.path();
-        let stat = fs::read_to_string(path.join("stat")).unwrap_or_default();
-        // The 2nd field is "(name)" and can itself contain spaces/parens, so
-        // split on the *last* ')' before reading the state letter after it.
-        let (stat_name, state) = match stat.rsplit_once(')') {
-            Some((head, tail)) => (
-                head.split_once('(').map(|(_, n)| n).unwrap_or(""),
-                tail.split_whitespace().next().unwrap_or(""),
-            ),
-            None => ("", ""),
-        };
-        let cmdline = fs::read_to_string(path.join("cmdline")).unwrap_or_default();
-        let argv0 = cmdline.split('\0').next().unwrap_or("");
-        let name = if !argv0.is_empty() {
-            argv0.rsplit('/').next().unwrap_or(argv0)
-        } else {
-            stat_name
-        };
-        if name.is_empty() {
-            continue;
-        }
-        let slot = map.entry(name.to_string()).or_insert((false, false));
-        slot.0 = true;
-        slot.1 |= state == "Z";
-    }
-    map
-}
 
 pub(crate) fn find_battery_device() -> Option<String> {
     let power_supply_path = "/sys/class/power_supply";
