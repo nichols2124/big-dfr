@@ -25,8 +25,6 @@ specific shell's IPC.
 
 ## Notable features over upstream
 
-- An App Dock widget: pinned app launchers with drag-scroll, running/crashed state via a generic
-  `/proc` scan, and a GTK installed-apps picker.
 - CPU/GPU usage (utilization %) display mode, alongside the existing temperature/wattage modes.
 - A `LayerBack` button action and a `LAYER_ENTRY_POINT` tracker: any popup-style layer (sliders,
   the performance secret menu) reachable from more than one place returns to wherever it was
