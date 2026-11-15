@@ -1,0 +1,23 @@
+#!/bin/sh
+# ExecStartPre of big-dfr: wait for the Touch Bar display (appletbdrm).
+# Its probe can time out (-110) early in boot; then re-send the USB config switch
+# (0 -> 2) that the udev rule does, a few times, before giving up.
+has_display() {
+  for c in /sys/class/drm/card*; do
+    [ "$(basename "$(readlink -f "$c/device/driver" 2>/dev/null)")" = appletbdrm ] && return 0
+  done
+  return 1
+}
+touchbar_usb() {
+  for d in /sys/bus/usb/devices/*; do
+    [ "$(cat "$d/idVendor" 2>/dev/null):$(cat "$d/idProduct" 2>/dev/null)" = "05ac:8302" ] && { echo "$d"; return 0; }
+  done
+  return 1
+}
+for attempt in 1 2 3 4 5; do
+  i=0; while [ $i -lt 20 ]; do has_display && exit 0; sleep 0.5; i=$((i + 1)); done
+  d=$(touchbar_usb) || continue
+  echo "Touch Bar display missing; re-sending USB display-mode switch (attempt $attempt)"
+  echo 0 > "$d/bConfigurationValue"; sleep 1; echo 2 > "$d/bConfigurationValue"
+done
+has_display

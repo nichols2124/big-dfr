@@ -1,10 +1,11 @@
 [Unit]
 Description=big-dfr Touch Bar daemon (T2)
 After=systemd-user-sessions.service systemd-logind.service
-StartLimitIntervalSec=30
-StartLimitBurst=3
+# Never give up: the Touch Bar display can appear late in boot.
+StartLimitIntervalSec=0
 
 [Service]
+ExecStartPre=/usr/local/lib/big-dfr-wait-display
 ExecStart=/usr/bin/big-dfr
 Restart=always
 RestartSec=2
@@ -13,7 +14,9 @@ ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=true
 PrivateIPC=true
-ProtectKernelTunables=true
+# Brightness and keyboard-backlight sliders write /sys/class/backlight and
+# /sys/class/leds; the sandbox default blocks that.
+ProtectKernelTunables=false
 ProtectKernelModules=true
 ProtectKernelLogs=true
 ProtectControlGroups=strict
@@ -21,6 +24,10 @@ RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
 CacheDirectory=big-dfr
 RestrictNamespaces=true
 RestrictSUIDSGID=true
+# For the TTY-toggle widget's chvt call. drop_privileges() in main.rs
+# re-raises this into the ambient set right after the root->user UID drop,
+# so it survives into the chvt child process.
+AmbientCapabilities=CAP_SYS_TTY_CONFIG
 
 [Install]
 WantedBy=graphical.target

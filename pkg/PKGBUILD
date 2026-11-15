@@ -2,8 +2,8 @@
 # (service adapted: no ibridge dependency)
 pkgname=big-dfr
 pkgver=0.3.7.af2d90a
-pkgrel=3
-pkgdesc="Customizable Touch Bar daemon (tiny-dfr fork) with sliders, lyrics, dock, and more"
+pkgrel=4
+pkgdesc="Customizable Touch Bar daemon (tiny-dfr fork) with sliders, lyrics, media, and more"
 arch=(x86_64)
 url="https://github.com/nichols2124/big-dfr"
 license=(MIT Apache-2.0)
@@ -14,12 +14,13 @@ replaces=(not-quite-tiny-dfr)
 backup=()
 source=("$pkgname::git+https://github.com/emzmo/not-quite-tiny-dfr.git#commit=af2d90a"
         big-dfr.service
+        big-dfr-wait-display
         touchbar-layers.patch)
-sha256sums=('SKIP' 'SKIP' 'SKIP')
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 prepare() {
   cd "$pkgname"
-  # LayerN actions, LayerTimeout, SliderOpen, hidden blank widgets, joined button groups with separators, frame dump, OnClick on plain buttons, DimBrightness/OffBrightness, LayerStyles, per-button radius/insets, collapsing blank widgets, battery state from charger, layer animations, press-drag sliders, swipe 0<->1 only, App Dock, performance secret menu, renamed big-dfr
+  # LayerN actions, LayerTimeout, SliderOpen, hidden blank widgets, joined button groups with separators, frame dump, OnClick on plain buttons, DimBrightness/OffBrightness, LayerStyles, per-button radius/insets, collapsing blank widgets, battery state from charger, layer animations, press-drag sliders, swipe 0<->1 only, performance secret menu, renamed big-dfr
   git clean -fdq  # files added by the patch survive makepkg re-extraction
   # git apply, not plain patch: the patch now includes pure file renames
   # (icons, the systemd unit, the udev rule) as git rename metadata with no
@@ -40,6 +41,7 @@ package() {
   cp -r share/big-dfr/. "$pkgdir/usr/share/big-dfr/"
   install -Dm644 -t "$pkgdir/usr/lib/udev/rules.d" etc/udev/rules.d/*.rules
   install -Dm644 "$srcdir/big-dfr.service" "$pkgdir/usr/lib/systemd/system/big-dfr.service"
+  install -Dm755 "$srcdir/big-dfr-wait-display" "$pkgdir/usr/local/lib/big-dfr-wait-display"
   for f in etc/systemd/system/systemd-backlight@*.service; do
     install -Dm644 "$f" "$pkgdir/usr/lib/systemd/system/$(basename "$f")"
   done
