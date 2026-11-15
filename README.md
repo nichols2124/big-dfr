@@ -1,8 +1,10 @@
 # big-dfr
 
 A heavily forked [not-quite-tiny-dfr](https://github.com/emzmo/not-quite-tiny-dfr) Touch Bar daemon
-(itself a fork of [tiny-dfr](https://github.com/tiny-dfr/tiny-dfr)), built out for a
-MacBookPro16,1 (T2) running Arch Linux with niri + DMS.
+(itself a fork of [tiny-dfr](https://github.com/tiny-dfr/tiny-dfr)) for Apple T2 and Apple Silicon
+Macs. The daemon itself has no desktop/compositor dependency; `install.sh` ships a generic
+default config plus a niri + DMS (dux-shell) variant with a couple of extra buttons for that
+specific shell's IPC.
 
 ## Layout
 
