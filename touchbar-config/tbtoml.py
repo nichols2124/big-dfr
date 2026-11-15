@@ -25,7 +25,7 @@ TOP_ORDER = [
     "MediaLyricsCache",
 ]
 BUTTON_ORDER = [
-    "Icon", "Text", "Caption", "Time", "Battery", "Cpu", "Gpu", "Media", "Dock", "DockApps", "Command",
+    "Icon", "Text", "Caption", "Time", "Battery", "Cpu", "Gpu", "Media", "Command",
     "Action", "OnClick", "Stretch", "Pinned",
     "SliderGet", "SliderSet", "SliderMute", "SliderLowIcon", "SliderMuteIcon",
     "SliderStretch", "SliderOpen", "Interval", "ExpandCommand", "ExpandStretch",

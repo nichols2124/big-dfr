@@ -101,14 +101,22 @@ TouchBarBrightnessUp TouchBarBrightnessDown Layer0 Layer1 Layer2 Layer3 Layer4 L
 Layer8 Layer9""".split()
 CONTENT_KEYS = {"Icon", "Svg", "Text", "Caption", "Time", "Locale", "Battery", "Cpu", "CpuTemp", "CpuLabel", "Gpu", "GpuLabel",
                 "Media", "Command", "Interval", "SliderGet", "SliderSet", "SliderMute", "SliderLowIcon",
-                "SliderMuteIcon", "SliderStretch", "SliderOpen", "ExpandCommand", "ExpandStretch",
-                "Dock", "DockApps"}
+                "SliderMuteIcon", "SliderStretch", "SliderOpen", "ExpandCommand", "ExpandStretch"}
 TYPES = [("icon", "Icon"), ("text", "Text"), ("spacer", "Empty space"), ("slider", "Slider"), ("media", "Media player"),
-         ("command", "Script widget"), ("time", "Clock"), ("battery", "Battery"), ("cpu", "CPU"), ("gpu", "GPU"),
-         ("dock", "App dock")]
-ADD_TYPES = TYPES[:4] + [("mediabtn", "Media button (only while playing)")] + TYPES[4:]
+         ("command", "Script widget"), ("time", "Clock"), ("battery", "Battery"), ("cpu", "CPU"), ("gpu", "GPU")]
+ADD_TYPES = (
+    TYPES[:4]
+    + [
+        ("mediabtn", "Media button (only while playing)"),
+        ("weather", "Weather"),
+        ("ttytoggle", "TTY toggle"),
+    ]
+    + TYPES[4:]
+)
 DMS_RUN = "systemd-run --user --quiet --collect "
 MEDIA_SCRIPT = "sh ~/.config/big-dfr/media-button.sh"
+WEATHER_SCRIPT = "sh /usr/share/big-dfr/widgets/weather.sh"
+TTY_TOGGLE_SCRIPT = "sh /usr/share/big-dfr/widgets/tty-toggle.sh"
 VOLUME_GET = "wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '{print int($2*100) ($3==\"[MUTED]\" ? \" muted\" : \"\")}'"
 # Names the older Romanian editor stored; the app is English now.
 NAME_MIGRATION = {"Luminozitate": "Brightness", "Volum": "Volume", "Control Strip extins": "Expanded Control Strip"}
@@ -123,8 +131,6 @@ def btn_type(b):
         return "slider"
     if b.get("Media"):
         return "media"
-    if b.get("Dock"):
-        return "dock"
     for key, kind in (("Command", "command"), ("Time", "time"), ("Battery", "battery"), ("Cpu", "cpu"),
                       ("CpuTemp", "cpu"), ("Gpu", "gpu"), ("Icon", "icon"), ("Svg", "icon"), ("Text", "text")):
         if key in b:
@@ -228,83 +234,6 @@ def icon_pixbuf(name, w, h):
         except GLib.Error:
             _pix[key] = None
     return _pix[key]
-
-
-# ---- installed-app picker (Dock widget) ----
-_FIELD_CODE_RE = re.compile(r"%[fFuUdDnNickvm%]")
-_icon_theme = None
-_file_pix = {}
-
-
-def strip_exec_field_codes(exec_line):
-    """Drop Exec= placeholders (%f, %U, ...) a launched command never needs."""
-    s = _FIELD_CODE_RE.sub(lambda m: "%" if m.group() == "%%" else "", exec_line or "")
-    return " ".join(s.split())
-
-
-def slugify(s):
-    return re.sub(r"[^A-Za-z0-9_.-]+", "-", s).strip("-") or "app"
-
-
-def list_installed_apps():
-    """Installed, launchable .desktop entries, deduplicated and name-sorted."""
-    seen, out = set(), []
-    for info in Gio.AppInfo.get_all():
-        if not info.should_show():
-            continue
-        appid = info.get_id() or info.get_name()
-        if appid in seen:
-            continue
-        seen.add(appid)
-        out.append(info)
-    out.sort(key=lambda i: i.get_name().lower())
-    return out
-
-
-def icon_theme():
-    global _icon_theme
-    if _icon_theme is None:
-        _icon_theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
-    return _icon_theme
-
-
-def app_icon_file(gicon, size=64):
-    """Resolve a Gio.Icon to a concrete SVG/PNG file via the system icon theme."""
-    if gicon is None:
-        return None
-    try:
-        paintable = icon_theme().lookup_by_gicon(gicon, size, 1, Gtk.TextDirection.NONE, 0)
-    except GLib.Error:
-        return None
-    f = paintable.get_file() if paintable else None
-    path = f.get_path() if f else None
-    return Path(path) if path else None
-
-
-def app_icon_pixbuf(gicon, size):
-    path = app_icon_file(gicon, size)
-    key = (str(path), size)
-    if key not in _file_pix:
-        try:
-            _file_pix[key] = GdkPixbuf.Pixbuf.new_from_file_at_size(str(path), size, size) if path else None
-        except GLib.Error:
-            _file_pix[key] = None
-    return _file_pix[key]
-
-
-def ensure_dock_icon(app_id, gicon):
-    """Cache `gicon`'s file under CONF_DIR by bare name, since the daemon only
-    looks up Dock icons by name in its own dirs (not a full theme lookup);
-    returns that bare name, or None if the icon can't be resolved/cached."""
-    src = app_icon_file(gicon)
-    if not src or src.suffix.lower() not in (".svg", ".png"):
-        return None
-    name = f"dockapp-{slugify(app_id)}"
-    dest = CONF_DIR / f"{name}{src.suffix.lower()}"
-    if not dest.exists():
-        CONF_DIR.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(src, dest)
-    return name
 
 
 class Model:
@@ -1019,18 +948,6 @@ class Window(Adw.ApplicationWindow):
                 icon("play_pause")
             else:
                 text(b.get("Command", "").split()[-1].rsplit("/", 1)[-1] if b.get("Command", "").strip() else "script", 24, 0.7)
-        elif t == "dock":
-            apps = b.get("DockApps") or []
-            if not apps:
-                text("App dock (empty)", 20, 0.5)
-            else:
-                pitch = iw + 14
-                x = left + 8 + iw / 2
-                for app in apps:
-                    if x + iw / 2 > left + width - 8:
-                        break
-                    icon(app.get("Icon"), x)
-                    x += pitch
         elif t == "slider":
             ix = left + 12 + iw / 2
             icon(b.get("Icon", "volume_up"), ix if b.get("SliderOpen") else None)
@@ -1204,10 +1121,7 @@ class Window(Adw.ApplicationWindow):
             g = self.group("Media player", "Command to run when the panel is tapped outside its controls")
             g.add(self.text_row("On tap", b, "OnClick"))
             self.editor.append(g)
-        elif t == "dock":
-            self.editor.append(self.dock_apps_panel(b))
-
-        if t not in ("spacer", "media", "dock"):
+        if t not in ("spacer", "media"):
             self.editor.append(self.action_group(b))
         if t != "spacer":
             g = self.group("Appearance")
@@ -1240,8 +1154,6 @@ class Window(Adw.ApplicationWindow):
                     "SliderMute": "wpctl set-mute @DEFAULT_AUDIO_SINK@ {}", "Interval": 1}
         if kind == "media":
             return {"Media": True}
-        if kind == "dock":
-            return {"Dock": True, "DockApps": []}
         if kind == "mediabtn":
             out = {"Command": MEDIA_SCRIPT, "Interval": 1, "OnClick": "Action"}
             for i, layer in enumerate(self.m.cfg["Layers"]):
@@ -1249,6 +1161,15 @@ class Window(Adw.ApplicationWindow):
                     out["Action"] = f"Layer{i}"
                     break
             return out
+        if kind == "weather":
+            # wttr.in is rate-limited; nothing shorter than several minutes.
+            return {"Command": WEATHER_SCRIPT, "Interval": 900}
+        if kind == "ttytoggle":
+            return {
+                "Icon": "utilities-terminal-symbolic",
+                "Theme": "Adwaita",
+                "OnClick": TTY_TOGGLE_SCRIPT,
+            }
         return {"spacer": {}, "command": {"Command": "date +%H:%M", "Interval": 30}, "time": {"Time": "%H:%M"},
                 "battery": {"Battery": "both"}, "cpu": {"Cpu": "celsius"}, "gpu": {"Gpu": "celsius"}}[kind]
 
@@ -1314,118 +1235,6 @@ class Window(Adw.ApplicationWindow):
         sw = Gtk.ScrolledWindow(child=flow, min_content_height=150, max_content_height=150, hscrollbar_policy=Gtk.PolicyType.NEVER, css_classes=["card"])
         box.append(sw)
         return box
-
-    # ---- Dock widget: pinned-apps list + installed-app picker ----
-    def dock_apps_panel(self, b):
-        g = self.group("Pinned apps", "Press to launch; drag to scroll if they don't all fit.")
-        apps = b.setdefault("DockApps", [])
-
-        def move(i, d):
-            j = i + d
-            if 0 <= j < len(apps):
-                apps[i], apps[j] = apps[j], apps[i]
-                self.on_edit(rebuild=True)
-
-        def remove(i):
-            apps.pop(i)
-            self.on_edit(rebuild=True)
-
-        if not apps:
-            g.add(Adw.ActionRow(title="No apps pinned yet", subtitle="Add one below"))
-        for i, app in enumerate(apps):
-            row = Adw.ActionRow(title=app.get("Name") or app.get("Launch", "?"), subtitle=app.get("Launch", ""))
-            pb = icon_pixbuf(app.get("Icon"), 28, 28) if app.get("Icon") else None
-            if pb:
-                row.add_prefix(Gtk.Image.new_from_paintable(Gdk.Texture.new_for_pixbuf(pb)))
-            up = Gtk.Button(icon_name="go-up-symbolic", valign=Gtk.Align.CENTER, sensitive=i > 0)
-            up.connect("clicked", lambda _w, i=i: move(i, -1))
-            down = Gtk.Button(icon_name="go-down-symbolic", valign=Gtk.Align.CENTER, sensitive=i < len(apps) - 1)
-            down.connect("clicked", lambda _w, i=i: move(i, 1))
-            rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"])
-            rm.connect("clicked", lambda _w, i=i: remove(i))
-            for w in (up, down, rm):
-                row.add_suffix(w)
-            g.add(row)
-        add_btn = Gtk.Button(label="Add App…", halign=Gtk.Align.START, margin_top=6, css_classes=["flat"])
-        add_btn.connect("clicked", lambda *_: self.open_app_picker(b))
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        box.append(g)
-        box.append(add_btn)
-        return box
-
-    def open_app_picker(self, b):
-        dialog = Adw.Dialog(title="Add App to Dock", content_width=420, content_height=560)
-        toolbar = Adw.ToolbarView()
-        header = Adw.HeaderBar()
-        search = Gtk.SearchEntry(placeholder_text="Search installed apps")
-        header.set_title_widget(search)
-        toolbar.add_top_bar(header)
-
-        listbox = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE,
-                               margin_start=12, margin_end=12, margin_top=12, margin_bottom=12)
-        # Capture layer/button indices at dialog-open time so add_app can
-        # re-fetch the live button dict after each rebuild (on_edit(rebuild=True)
-        # may reload the TOML and replace the dict that `b` pointed to, making
-        # the stale `b` reference report false "already in this dock" errors).
-        _picker_L = self.L
-        _picker_B = self.B
-
-        def _live_b():
-            """Return the current button dict (re-fetched after each rebuild)."""
-            try:
-                return self.m.cfg["Layers"][_picker_L][_picker_B]
-            except (IndexError, KeyError):
-                return b  # fallback to original if indices become invalid
-
-        def add_app(info):
-            name = info.get_name()
-            exec_line = strip_exec_field_codes(info.get_commandline() or "")
-            if not exec_line:
-                self.toast(f"{name}: no launch command, skipped")
-                return
-            match = Path(exec_line.split()[0]).name
-            # Recompute existing from the live (possibly reloaded) button dict
-            current_b = _live_b()
-            existing_now = {a.get("Match") for a in current_b.get("DockApps", [])}
-            if match in existing_now:
-                self.toast(f"{name} is already in this dock")
-                return
-            icon_name = ensure_dock_icon(info.get_id() or name, info.get_icon())
-            entry = {"Name": name, "Launch": exec_line, "Match": match}
-            if icon_name:
-                entry["Icon"] = icon_name
-            current_b.setdefault("DockApps", []).append(entry)
-            self.on_edit(rebuild=True)
-            self.toast(f"Added {name}")
-
-        for info in list_installed_apps():
-            row = Adw.ActionRow(title=GLib.markup_escape_text(info.get_name()), activatable=True)
-            pb = app_icon_pixbuf(info.get_icon(), 32)
-            if pb:
-                row.add_prefix(Gtk.Image.new_from_paintable(Gdk.Texture.new_for_pixbuf(pb)))
-            else:
-                row.add_prefix(Gtk.Image.new_from_icon_name("application-x-executable-symbolic"))
-            row.connect("activated", lambda _r, info=info: add_app(info))
-            row.search_key = info.get_name().lower()
-            listbox.append(row)
-
-        query = [""]
-
-        def filter_func(row):
-            return query[0] in row.search_key
-
-        listbox.set_filter_func(filter_func)
-
-        def on_search(entry):
-            query[0] = entry.get_text().strip().lower()
-            listbox.invalidate_filter()
-
-        search.connect("search-changed", on_search)
-
-        scroller = Gtk.ScrolledWindow(child=listbox, vexpand=True)
-        toolbar.set_content(scroller)
-        dialog.set_child(toolbar)
-        dialog.present(self)
 
     def action_group(self, b):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
