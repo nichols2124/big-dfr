@@ -740,6 +740,23 @@ fn begin_transition(
     Some(LayerTransition { from: snapshot_surface(surface)?, opening, settle_exactly, span_from, span_to, spatial, effects })
 }
 
+/// Render `layer` fully and cleanly onto `surface` before it gets snapshotted
+/// as a new transition's "from" frame. Without this, starting a transition
+/// while a previous one is still mid-flight would snapshot whatever
+/// partially blended frame that one most recently drew -- a visible
+/// smear/ghost -- instead of a clean, settled image to crossfade away from.
+#[allow(clippy::too_many_arguments)]
+fn settle_frame_for_snapshot(
+    layers: &mut [FunctionLayer],
+    layer: usize,
+    cfg: &Config,
+    surface: &ImageSurface,
+    width: u16,
+    height: u16,
+) {
+    layers[layer].draw(cfg, width as i32, height as i32, surface, (0.0, 0.0), true, 0.0, true, true);
+}
+
 /// A layer-swap rotation renumbers `layers`; touch states hold layer
 /// indices, so they must rotate the same way or a finger keeps acting on
 /// whichever layer slid into its old index (e.g. releasing its held key on
@@ -2897,6 +2914,9 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                 // layer we're entering can return here, whichever layer this
                 // happens to be -- not just a single hardcoded "home".
                 uinput::LAYER_ENTRY_POINT.store(active_layer, std::sync::atomic::Ordering::Relaxed);
+                if transition.is_some() {
+                    settle_frame_for_snapshot(&mut layers, active_layer, &cfg, &surface, width, height);
+                }
                 transition = begin_transition(
                     &surface, &layers, active_layer, req - 1, &cfg, width as f64, last_touch_x, &mut popup_home,
                 );
@@ -2936,6 +2956,9 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
             // be indexed as-is.
             let home = uinput::LAYER_ENTRY_POINT.load(std::sync::atomic::Ordering::Relaxed);
             let home = if home < layers.len() { home } else { 0 };
+            if transition.is_some() {
+                settle_frame_for_snapshot(&mut layers, active_layer, &cfg, &surface, width, height);
+            }
             transition = begin_transition(
                 &surface, &layers, active_layer, home, &cfg, width as f64, last_touch_x, &mut popup_home,
             );
@@ -4510,6 +4533,9 @@ fn real_main(drm: &mut DrmBackend, uinput: &mut UInputHandle<File>) {
                                         // slider popup's later DragCloseTimeout
                                         // close returns there instead of here.
                                         uinput::LAYER_ENTRY_POINT.store(layer, std::sync::atomic::Ordering::Relaxed);
+                                        if transition.is_some() {
+                                            settle_frame_for_snapshot(&mut layers, active_layer, &cfg, &surface, width, height);
+                                        }
                                         active_layer = target_layer;
                                         transition = begin_transition(&surface, &layers, layer, target_layer, &cfg, width as f64, last_touch_x, &mut popup_home);
                                         layers[target_layer].touch_slider(s_idx);
